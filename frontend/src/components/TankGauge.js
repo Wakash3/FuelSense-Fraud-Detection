@@ -9,7 +9,6 @@ function TankGauge({ tank, darkMode }) {
   const vcf         = parseFloat(tank.vcf) || 0;
   const isLow       = fill < 20;
   const isMedium    = fill >= 20 && fill < 40;
-  const isHigh      = fill >= 40;
   const isWaterHigh = water > 50;
 
   const gaugeColor  = isLow ? '#e74c3c' : isMedium ? '#f39c12' : '#4CAF50';
