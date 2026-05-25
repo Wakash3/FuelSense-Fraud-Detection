@@ -2,13 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import Login from './components/Login';
 import Sidebar from './components/Sidebar';
+import BottomNav from './components/BottomNav';
 import TankGauge from './components/TankGauge';
 import TankChart from './components/TankChart';
 import DeliveryForm from './components/DeliveryForm';
-import DeliveryList from './components/DeliveryList';
 import DeliveryTimeline from './components/DeliveryTimeline';
+import DeliveryList from './components/DeliveryList';
 import ReconciliationTable from './components/ReconciliationTable';
 import PumpSalesForm from './components/PumpSalesForm';
+import useIsMobile from './useIsMobile';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
@@ -22,6 +24,7 @@ function App() {
   const [lastUpdated,    setLastUpdated] = useState(null);
   const [showForm,       setShowForm]    = useState(false);
   const [darkMode,       setDarkMode]    = useState(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -64,11 +67,18 @@ function App() {
   }
 
   const colors = {
-    bg:       darkMode ? '#0f0f1a' : '#f0f2f5',
-    card:     darkMode ? '#1e1e2e' : '#ffffff',
-    text:     darkMode ? '#e0e0e0' : '#1a1a2e',
-    subtext:  darkMode ? '#888'    : '#666',
-    border:   darkMode ? '#2a2a3e' : '#e0e0e0',
+    bg:      darkMode ? '#0f0f1a' : '#f0f2f5',
+    card:    darkMode ? '#1e1e2e' : '#ffffff',
+    text:    darkMode ? '#e0e0e0' : '#1a1a2e',
+    subtext: darkMode ? '#888'    : '#666',
+    border:  darkMode ? '#2a2a3e' : '#e0e0e0',
+  };
+
+  const mainStyle = {
+    marginLeft:    isMobile ? '0' : '220px',
+    flex:          1,
+    minHeight:     '100vh',
+    paddingBottom: isMobile ? '70px' : '0',
   };
 
   if (authLoading) {
@@ -88,34 +98,47 @@ function App() {
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: colors.bg, fontFamily: 'system-ui, sans-serif' }}>
 
-      {/* Sidebar */}
-      <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        darkMode={darkMode}
-        setDarkMode={setDarkMode}
-        user={session.user}
-        onSignOut={handleSignOut}
-      />
+      {/* Sidebar — desktop only */}
+      {!isMobile && (
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          darkMode={darkMode}
+          setDarkMode={setDarkMode}
+          user={session.user}
+          onSignOut={handleSignOut}
+        />
+      )}
+
+      {/* Bottom nav — mobile only */}
+      {isMobile && (
+        <BottomNav
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          darkMode={darkMode}
+        />
+      )}
 
       {/* Main content */}
-      <div style={{ marginLeft: '220px', flex: 1, minHeight: '100vh' }}>
+      <div style={mainStyle}>
 
         {/* Top bar */}
         <div style={{ ...styles.topBar, background: colors.card, borderBottom: `1px solid ${colors.border}` }}>
           <div>
-            <div style={{ ...styles.pageTitle, color: colors.text }}>
+            <div style={{ ...styles.pageTitle, color: colors.text, fontSize: isMobile ? '16px' : '18px' }}>
               {activeTab === 'dashboard'      && '📊 Live Dashboard'}
               {activeTab === 'deliveries'     && '🚚 Deliveries'}
               {activeTab === 'reconciliation' && '📋 Reconciliation'}
               {activeTab === 'reports'        && '📈 Reports'}
             </div>
-            <div style={{ fontSize: '12px', color: colors.subtext, marginTop: '2px' }}>
-              FuelSense Demo Station — Nairobi
-            </div>
+            {!isMobile && (
+              <div style={{ fontSize: '12px', color: colors.subtext, marginTop: '2px' }}>
+                FuelSense Demo Station — Nairobi
+              </div>
+            )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {lastUpdated && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {lastUpdated && !isMobile && (
               <div style={{ fontSize: '12px', color: colors.subtext }}>
                 Updated {lastUpdated}
               </div>
@@ -124,91 +147,76 @@ function App() {
               style={{ ...styles.refreshBtn, background: darkMode ? '#2a2a3e' : '#f0f2f5', color: colors.text }}
               onClick={loadData}
             >
-              ↻ Refresh
+              ↻
             </button>
+            {isMobile && (
+              <button
+                style={{ ...styles.refreshBtn, background: darkMode ? '#2a2a3e' : '#f0f2f5', color: colors.text }}
+                onClick={handleSignOut}
+              >
+                ⏻
+              </button>
+            )}
           </div>
         </div>
 
         {/* Page content */}
-        <div style={styles.content}>
+        <div style={{ ...styles.content, padding: isMobile ? '12px' : '24px' }}>
 
           {/* ── DASHBOARD ── */}
           {activeTab === 'dashboard' && (
             <div>
-              {/* Alerts */}
               {tanks.filter(t => parseFloat(t.fill_pct) < 20).map(t => (
                 <div key={t.id} style={styles.alertRed}>
-                  🚨 <strong>Tank {t.tank_number} ({t.fuel_type.toUpperCase()})</strong> is critically low —
-                  {parseFloat(t.fill_pct).toFixed(1)}% remaining ({parseFloat(t.nsv_litres).toFixed(0)}L). Order fuel immediately.
+                  🚨 <strong>Tank {t.tank_number}</strong> critically low — {parseFloat(t.fill_pct).toFixed(1)}%
                 </div>
               ))}
               {tanks.filter(t => parseFloat(t.water_mm) > 50).map(t => (
                 <div key={t.id} style={styles.alertAmber}>
-                  ⚠️ <strong>Tank {t.tank_number}</strong> has high water — {t.water_mm}mm. Inspect immediately.
+                  ⚠️ <strong>Tank {t.tank_number}</strong> high water — {t.water_mm}mm
                 </div>
               ))}
 
               {/* Summary cards */}
-              <div style={styles.summaryGrid}>
-                <SummaryCard
-                  label="Total NSV"
-                  value={tanks.reduce((s, t) => s + parseFloat(t.nsv_litres || 0), 0).toFixed(0) + ' L'}
-                  icon="⛽"
-                  color="#4CAF50"
-                  bg={colors.card}
-                  text={colors.text}
-                  sub={colors.subtext}
-                />
-                <SummaryCard
-                  label="Active Tanks"
-                  value={tanks.length + ' tanks'}
-                  icon="🛢"
-                  color="#3498db"
-                  bg={colors.card}
-                  text={colors.text}
-                  sub={colors.subtext}
-                />
-                <SummaryCard
-                  label="Deliveries"
-                  value={(Array.isArray(deliveries) ? deliveries.length : 0) + ' total'}
-                  icon="🚚"
-                  color="#f39c12"
-                  bg={colors.card}
-                  text={colors.text}
-                  sub={colors.subtext}
-                />
-                <SummaryCard
-                  label="Avg Temperature"
-                  value={tanks.length
-                    ? (tanks.reduce((s, t) => s + parseFloat(t.temperature_c || 0), 0) / tanks.length).toFixed(1) + ' °C'
-                    : '—'}
-                  icon="🌡"
-                  color="#e74c3c"
-                  bg={colors.card}
-                  text={colors.text}
-                  sub={colors.subtext}
-                />
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
+                gap: isMobile ? '8px' : '16px',
+                marginBottom: '24px',
+              }}>
+                <SummaryCard label="Total NSV"       value={tanks.reduce((s, t) => s + parseFloat(t.nsv_litres || 0), 0).toFixed(0) + ' L'} icon="⛽" color="#4CAF50" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                <SummaryCard label="Active Tanks"    value={tanks.length + ' tanks'} icon="🛢" color="#3498db" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                <SummaryCard label="Deliveries"      value={(Array.isArray(deliveries) ? deliveries.length : 0) + ' total'} icon="🚚" color="#f39c12" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                <SummaryCard label="Avg Temp"        value={tanks.length ? (tanks.reduce((s, t) => s + parseFloat(t.temperature_c || 0), 0) / tanks.length).toFixed(1) + ' °C' : '—'} icon="🌡" color="#e74c3c" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
               </div>
 
               {/* Tank gauges */}
-              <div style={styles.sectionHeader}>
+              <div style={{ ...styles.sectionHeader }}>
                 <div style={{ ...styles.sectionTitle, color: colors.text }}>Live Tank Levels</div>
               </div>
-              <div style={styles.gaugeGrid}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
+                gap: '16px',
+              }}>
                 {tanks.map(tank => (
                   <TankGauge key={tank.id} tank={tank} darkMode={darkMode} />
                 ))}
               </div>
 
               {/* Charts */}
-              <div style={{ ...styles.sectionHeader, marginTop: '24px' }}>
-                <div style={{ ...styles.sectionTitle, color: colors.text }}>NSV Trends — Last Hour</div>
-              </div>
-              <div style={styles.chartGrid}>
-                {tanks.map(tank => (
-                  <TankChart key={tank.id} tank={tank} api={API} darkMode={darkMode} />
-                ))}
-              </div>
+              {!isMobile && (
+                <>
+                  <div style={{ ...styles.sectionHeader, marginTop: '24px' }}>
+                    <div style={{ ...styles.sectionTitle, color: colors.text }}>NSV Trends — Last Hour</div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '16px' }}>
+                    {tanks.map(tank => (
+                      <TankChart key={tank.id} tank={tank} api={API} darkMode={darkMode} />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -218,7 +226,7 @@ function App() {
               <div style={styles.rowBetween}>
                 <div style={{ ...styles.sectionTitle, color: colors.text }}>Delivery Records</div>
                 <button style={styles.newBtn} onClick={() => setShowForm(!showForm)}>
-                  {showForm ? '✕ Cancel' : '+ New Delivery'}
+                  {showForm ? '✕' : '+ New'}
                 </button>
               </div>
               {showForm && (
@@ -229,7 +237,6 @@ function App() {
                 />
               )}
 
-              {/* Active deliveries timeline */}
               {deliveries.filter(d => !['confirmed', 'flagged'].includes(d.status)).length > 0 && (
                 <div>
                   <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '12px' }}>
@@ -243,7 +250,6 @@ function App() {
                 </div>
               )}
 
-              {/* Completed deliveries */}
               <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '12px', marginTop: '24px' }}>
                 📋 Delivery History
               </div>
@@ -259,11 +265,10 @@ function App() {
             </div>
           )}
 
-
           {/* ── RECONCILIATION ── */}
           {activeTab === 'reconciliation' && (
             <div>
-              <div style={{ ...styles.sectionTitle, color: colors.text }}>Daily Reconciliation</div>
+              <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>Daily Reconciliation</div>
               <PumpSalesForm tanks={tanks} api={API} onSuccess={loadData} />
               <ReconciliationTable data={reconciliation} />
             </div>
@@ -287,34 +292,31 @@ function App() {
   );
 }
 
-function SummaryCard({ label, value, icon, color, bg, text, sub }) {
+function SummaryCard({ label, value, icon, color, bg, text, sub, mobile }) {
   return (
-    <div style={{ background: bg, borderRadius: '12px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+    <div style={{ background: bg, borderRadius: '12px', padding: mobile ? '14px' : '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <div style={{ fontSize: '13px', color: sub, marginBottom: '8px' }}>{label}</div>
-          <div style={{ fontSize: '22px', fontWeight: '700', color }}>{value}</div>
+          <div style={{ fontSize: mobile ? '11px' : '13px', color: sub, marginBottom: '6px' }}>{label}</div>
+          <div style={{ fontSize: mobile ? '16px' : '22px', fontWeight: '700', color }}>{value}</div>
         </div>
-        <div style={{ fontSize: '28px' }}>{icon}</div>
+        <div style={{ fontSize: mobile ? '20px' : '28px' }}>{icon}</div>
       </div>
     </div>
   );
 }
 
 const styles = {
-  topBar:       { padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 50 },
+  topBar:       { padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 50 },
   pageTitle:    { fontSize: '18px', fontWeight: '700' },
-  refreshBtn:   { padding: '6px 14px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' },
+  refreshBtn:   { padding: '6px 12px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: '500' },
   content:      { padding: '24px' },
-  summaryGrid:  { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' },
-  gaugeGrid:    { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' },
-  chartGrid:    { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '16px' },
   sectionHeader:{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
   sectionTitle: { fontSize: '15px', fontWeight: '600' },
   rowBetween:   { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
   newBtn:       { background: '#1a1a2e', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' },
-  alertRed:     { background: '#fdecea', border: '1px solid #f5c6cb', color: '#721c24', padding: '12px 16px', borderRadius: '8px', marginBottom: '12px', fontSize: '14px' },
-  alertAmber:   { background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', padding: '12px 16px', borderRadius: '8px', marginBottom: '12px', fontSize: '14px' },
+  alertRed:     { background: '#fdecea', border: '1px solid #f5c6cb', color: '#721c24', padding: '10px 14px', borderRadius: '8px', marginBottom: '10px', fontSize: '13px' },
+  alertAmber:   { background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', padding: '10px 14px', borderRadius: '8px', marginBottom: '10px', fontSize: '13px' },
   emptyState:   { borderRadius: '12px', padding: '60px 24px', textAlign: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
 };
 
