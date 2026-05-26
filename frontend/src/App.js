@@ -10,6 +10,7 @@ import DeliveryTimeline from './components/DeliveryTimeline';
 import DeliveryList from './components/DeliveryList';
 import ReconciliationTable from './components/ReconciliationTable';
 import PumpSalesForm from './components/PumpSalesForm';
+import Reports from './components/Reports';
 import useIsMobile from './useIsMobile';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
@@ -277,12 +278,13 @@ function App() {
           {/* ── REPORTS ── */}
           {activeTab === 'reports' && (
             <div>
-              <div style={{ ...styles.sectionTitle, color: colors.text }}>Reports</div>
-              <div style={{ ...styles.emptyState, background: colors.card, color: colors.subtext }}>
-                <div style={{ fontSize: '48px', marginBottom: '16px' }}>📈</div>
-                <div style={{ fontSize: '16px', fontWeight: '500', marginBottom: '8px' }}>Reports Coming Soon</div>
-                <div style={{ fontSize: '13px' }}>Export delivery history, variance analysis, and stock reports to PDF and CSV.</div>
-              </div>
+              <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>📈 Reports & Exports</div>
+              <Reports
+                deliveries={deliveries}
+                reconciliation={reconciliation}
+                tanks={tanks}
+                darkMode={darkMode}
+              />
             </div>
           )}
 
