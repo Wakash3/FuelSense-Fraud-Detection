@@ -103,21 +103,26 @@ function App() {
     }
   }
 
+  // Initialize user profile and stations when session loads
   useEffect(() => {
-    if (session && activeStation) {
-      loadData();
-      const interval = setInterval(loadData, 60000);
-      return () => clearInterval(interval);
+    if (session) {
+      const init = async () => {
+        const profile = await loadUserProfile();
+        await loadStations(profile);
+      };
+      init();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, activeStation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
+  // Load data when session and activeStation are available
   useEffect(() => {
     if (session && activeStation) {
       loadData();
       const interval = setInterval(loadData, 60000);
       return () => clearInterval(interval);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, activeStation]);
 
   async function handleSignOut() {
