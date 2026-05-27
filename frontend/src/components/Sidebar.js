@@ -4,10 +4,13 @@ const navItems = [
   { id: 'dashboard',      icon: '📊', label: 'Dashboard' },
   { id: 'deliveries',     icon: '🚚', label: 'Deliveries' },
   { id: 'reconciliation', icon: '📋', label: 'Reconciliation' },
+  { id: 'shifts',         icon: '⏱',  label: 'Shifts' },
+  { id: 'pump-vs-dip',    icon: '🔢', label: 'Pump vs Dip' },
+  { id: 'alerts',         icon: '🔔', label: 'Alerts' },
   { id: 'reports',        icon: '📈', label: 'Reports' },
 ];
 
-function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignOut }) {
+function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignOut, alertCount = 0 }) {
   return (
     <div style={{ ...styles.sidebar, background: darkMode ? '#0f0f1a' : '#1a1a2e' }}>
 
@@ -38,6 +41,23 @@ function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignO
           >
             <span style={styles.navIcon}>{item.icon}</span>
             <span style={styles.navLabel}>{item.label}</span>
+
+            {/* Alert badge on Alerts tab */}
+            {item.id === 'alerts' && alertCount > 0 && (
+              <span style={{
+                marginLeft: 'auto',
+                background: '#e74c3c',
+                color: '#fff',
+                fontSize: '10px',
+                fontWeight: '700',
+                padding: '2px 6px',
+                borderRadius: '10px',
+                minWidth: '18px',
+                textAlign: 'center',
+              }}>
+                {alertCount}
+              </span>
+            )}
           </button>
         ))}
       </nav>
