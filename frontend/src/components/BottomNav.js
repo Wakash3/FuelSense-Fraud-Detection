@@ -4,10 +4,11 @@ const navItems = [
   { id: 'dashboard',      icon: '📊', label: 'Dashboard' },
   { id: 'deliveries',     icon: '🚚', label: 'Deliveries' },
   { id: 'reconciliation', icon: '📋', label: 'Recon' },
-  { id: 'reports',        icon: '📈', label: 'Reports' },
+  { id: 'shifts',         icon: '⏱',  label: 'Shifts' },
+  { id: 'alerts',         icon: '🔔', label: 'Alerts' },
 ];
 
-function BottomNav({ activeTab, setActiveTab, darkMode }) {
+function BottomNav({ activeTab, setActiveTab, darkMode, alertCount = 0 }) {
   return (
     <div style={{
       ...styles.nav,
@@ -25,7 +26,27 @@ function BottomNav({ activeTab, setActiveTab, darkMode }) {
           }}
           onClick={() => setActiveTab(item.id)}
         >
-          <span style={styles.icon}>{item.icon}</span>
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <span style={styles.icon}>{item.icon}</span>
+            {/* Alert badge on Alerts tab */}
+            {item.id === 'alerts' && alertCount > 0 && (
+              <span style={{
+                position:   'absolute',
+                top:        '-4px',
+                right:      '-6px',
+                background: '#e74c3c',
+                color:      '#fff',
+                fontSize:   '9px',
+                fontWeight: '700',
+                padding:    '1px 4px',
+                borderRadius: '8px',
+                minWidth:   '14px',
+                textAlign:  'center',
+              }}>
+                {alertCount > 99 ? '99+' : alertCount}
+              </span>
+            )}
+          </div>
           <span style={{
             ...styles.label,
             fontWeight: activeTab === item.id ? '600' : '400',
