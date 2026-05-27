@@ -5,6 +5,12 @@ const { Client } = require('pg');
 const { fetchInventory, ping } = require('./atg-client');
 const { calculateNSV } = require('./measurement-engine');
 const { reconcileDelivery } = require('./reconciliation');
+const {
+  alertLowStock,
+  alertHighWater,
+  alertDeliveryFlagged,
+  alertReadingGap,
+} = require('./email-alerts');
 
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '60000', 10);
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -168,6 +174,14 @@ async function processTankReading(client, r, timestamp) {
   );
 
   const readingId = insertRes.rows[0].id;
+  
+  // Low stock alert — below 20%
+  const capacity = parseFloat(volumes.tov_litres);
+  const fillPct  = capacity > 0 ? (volumes.nsv_litres / capacity) * 100 : 0;
+  if (fillPct < 20 && fillPct > 0) {
+    console.warn(`[ALERT] Low stock on Tank ${r.tankNumber}: ${fillPct.toFixed(1)}%`);
+    await alertLowStock(r.tankNumber, r.product, fillPct, volumes.nsv_litres);
+  }
 
   console.log(
     '[SCHEDULER] Tank ' + r.tankNumber + ' (' + r.product + ')' +
@@ -178,7 +192,8 @@ async function processTankReading(client, r, timestamp) {
   );
 
   if (r.water_mm > 50) {
-    console.warn('[ALERT] High water on Tank ' + r.tankNumber + ': ' + r.water_mm + 'mm');
+    console.warn(`[ALERT] High water on Tank ${r.tankNumber}: ${r.water_mm}mm`);
+    await alertHighWater(r.tankNumber, r.product, r.water_mm);
   }
 
   await runDeliveryDetection(client, tankId, r, readingId, volumes, timestamp);
@@ -197,6 +212,7 @@ async function poll() {
   const alive = await ping();
   if (!alive) {
     console.error('[SCHEDULER] ATG unreachable - no reading written');
+    await alertReadingGap('ATG probe is not reachable. No readings have been recorded.');
     return;
   }
 
