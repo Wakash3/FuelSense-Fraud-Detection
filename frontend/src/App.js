@@ -104,12 +104,13 @@ function App() {
   }
 
   useEffect(() => {
-    if (session) {
-      loadUserProfile().then(profile => {
-        loadStations(profile);
-      });
+    if (session && activeStation) {
+      loadData();
+      const interval = setInterval(loadData, 60000);
+      return () => clearInterval(interval);
     }
-  }, [session]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, activeStation]);
 
   useEffect(() => {
     if (session && activeStation) {
