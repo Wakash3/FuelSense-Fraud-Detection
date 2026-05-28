@@ -135,10 +135,20 @@ function App() {
   }, [session, activeStation]);
 
   async function handleSignOut() {
-    await supabase.auth.signOut({ scope: 'global' });
+    try {
+      await supabase.auth.signOut({ scope: 'global' });
+    } catch (e) {
+      console.log('Sign out error:', e);
+    }
+    // Clear all storage
     localStorage.clear();
     sessionStorage.clear();
-    window.location.replace('/');
+    // Clear cookies
+    document.cookie.split(';').forEach(c => {
+      document.cookie = c.trim().split('=')[0] + '=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/';
+    });
+    // Force hard reload to login page
+    window.location.href = window.location.origin + '?signout=' + Date.now();
   }
 
   const colors = {
