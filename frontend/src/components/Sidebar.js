@@ -30,12 +30,8 @@ function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignO
             key={item.id}
             style={{
               ...styles.navItem,
-              background: activeTab === item.id
-                ? 'rgba(255,255,255,0.12)'
-                : 'transparent',
-              borderLeft: activeTab === item.id
-                ? '3px solid #4CAF50'
-                : '3px solid transparent',
+              background: activeTab === item.id ? 'rgba(255,255,255,0.12)' : 'transparent',
+              borderLeft: activeTab === item.id ? '3px solid #4CAF50' : '3px solid transparent',
             }}
             onClick={() => setActiveTab(item.id)}
           >
@@ -45,15 +41,15 @@ function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignO
             {/* Alert badge on Alerts tab */}
             {item.id === 'alerts' && alertCount > 0 && (
               <span style={{
-                marginLeft: 'auto',
-                background: '#e74c3c',
-                color: '#fff',
-                fontSize: '10px',
-                fontWeight: '700',
-                padding: '2px 6px',
+                marginLeft:   'auto',
+                background:   '#e74c3c',
+                color:        '#fff',
+                fontSize:     '10px',
+                fontWeight:   '700',
+                padding:      '2px 6px',
                 borderRadius: '10px',
-                minWidth: '18px',
-                textAlign: 'center',
+                minWidth:     '18px',
+                textAlign:    'center',
               }}>
                 {alertCount}
               </span>
@@ -64,16 +60,11 @@ function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignO
 
       {/* Bottom section */}
       <div style={styles.bottom}>
-        {/* Dark mode toggle */}
-        <button
-          style={styles.themeBtn}
-          onClick={() => setDarkMode(!darkMode)}
-        >
+        <button style={styles.themeBtn} onClick={() => setDarkMode(!darkMode)}>
           <span>{darkMode ? '☀️' : '🌙'}</span>
           <span style={styles.navLabel}>{darkMode ? 'Light mode' : 'Dark mode'}</span>
         </button>
 
-        {/* User info */}
         <div style={styles.userSection}>
           <div style={styles.avatar}>
             {user?.email?.[0]?.toUpperCase() || 'U'}
@@ -82,9 +73,7 @@ function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignO
             <div style={styles.userEmail}>{user?.email?.split('@')[0]}</div>
             <div style={styles.userRole}>Station Admin</div>
           </div>
-          <button style={styles.signOutBtn} onClick={onSignOut} title="Sign out">
-            ⏻
-          </button>
+          <button style={styles.signOutBtn} onClick={onSignOut} title="Sign out">⏻</button>
         </div>
       </div>
     </div>
