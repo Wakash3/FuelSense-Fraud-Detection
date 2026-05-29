@@ -1,7 +1,8 @@
 import React, { useState, useContext } from 'react';
 import { ToastContext } from '../Toast';
+import { useAuditLog } from '../useAuditLog';
 
-function DeliveryForm({ tanks, onSuccess, api }) {
+function DeliveryForm({ tanks, onSuccess, api, stationId, session, userProfile }) {
   const [form, setForm] = useState({
     tank_id:        '',
     supplier_name:  '',
@@ -11,6 +12,7 @@ function DeliveryForm({ tanks, onSuccess, api }) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
   const { addToast } = useContext(ToastContext);
+  const { log }      = useAuditLog(session, userProfile, stationId);
 
   function handleChange(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -45,6 +47,12 @@ function DeliveryForm({ tanks, onSuccess, api }) {
         return;
       }
 
+      await log('CREATE_DELIVERY', 'delivery', data.delivery_id, null, {
+        bol_number:     form.bol_number,
+        supplier_name:  form.supplier_name,
+        bol_nsv_litres: form.bol_nsv_litres,
+        opening_nsv:    data.opening_nsv,
+      });
       addToast(
         'Delivery created! Opening NSV: ' + parseFloat(data.opening_nsv).toFixed(1) + 'L — reading locked.',
         'success',

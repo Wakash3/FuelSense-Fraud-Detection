@@ -11,8 +11,13 @@ import DeliveryList from './components/DeliveryList';
 import ReconciliationTable from './components/ReconciliationTable';
 import PumpSalesForm from './components/PumpSalesForm';
 import Reports from './components/Reports';
+import AlertsPanel from './components/AlertsPanel';
+import ShiftManager from './components/ShiftManager';
+import PumpVsDip from './components/PumpVsDip';
 import useIsMobile from './useIsMobile';
+import { useAuditLog } from './useAuditLog';
 import { useToast } from './Toast';
+import AuditLog from './components/AuditLog';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
@@ -26,8 +31,10 @@ function App() {
   const [lastUpdated,    setLastUpdated] = useState(null);
   const [showForm,       setShowForm]    = useState(false);
   const [darkMode,       setDarkMode]    = useState(false);
+  const [alertSummary,   setAlertSummary] = useState({ critical: 0, warning: 0, info: 0 });
   const isMobile = useIsMobile();
   const { addToast } = useToast();
+  const { log }      = useAuditLog(session, userProfile, activeStation);
   const [stations,       setStations]      = useState([]);
   const [activeStation,  setActiveStation] = useState(null);
   const [userProfile,    setUserProfile]   = useState(null);
@@ -76,30 +83,28 @@ function App() {
       const uid = session?.user?.id || '';
       const stationParam = activeStation ? '?station_id=' + activeStation + '&uid=' + uid : '?uid=' + uid;
 
-      const [t, d, r] = await Promise.all([
+      const [t, d, r, a] = await Promise.all([
         fetch(API + '/api/tanks' + stationParam).then(res => res.json()),
         fetch(API + '/api/deliveries' + stationParam).then(res => res.json()),
         fetch(API + '/api/reconciliation' + stationParam).then(res => res.json()),
+        fetch(API + '/api/alerts/summary').then(res => res.json()).catch(() => ({ critical: 0, warning: 0, info: 0 })),
       ]);
-      
+
       setTanks(Array.isArray(t) ? t : []);
       setDeliveries(Array.isArray(d) ? d : []);
       setRecon(Array.isArray(r) ? r : []);
+      setAlertSummary(a);
       setLastUpdated(new Date().toLocaleTimeString());
 
-      // Alerts for low stock
       if (Array.isArray(t)) {
         t.filter(tank => parseFloat(tank.fill_pct) < 20).forEach(tank => {
           addToast(`Tank ${tank.tank_number} (${tank.fuel_type?.toUpperCase() || 'Unknown'}) is critically low — ${parseFloat(tank.fill_pct).toFixed(1)}%`, 'warning', 6000);
         });
-        
-        // Alerts for high water
         t.filter(tank => parseFloat(tank.water_mm) > 50).forEach(tank => {
           addToast(`Tank ${tank.tank_number} has high water — ${tank.water_mm}mm`, 'error', 6000);
         });
       }
-      
-      // Alerts for flagged deliveries
+
       if (Array.isArray(d)) {
         d.filter(del => del.status === 'flagged').forEach(del => {
           addToast(`Delivery ${del.bol_number} is flagged — variance exceeds tolerance.`, 'error', 6000);
@@ -112,19 +117,36 @@ function App() {
     }
   }
 
-  // Initialize user profile and stations when session loads
   useEffect(() => {
     if (session) {
       const init = async () => {
         const profile = await loadUserProfile();
         await loadStations(profile);
+        // Log sign in
+        try {
+          await fetch(API + '/api/audit-log', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+              user_email:  session.user.email,
+              user_role:   profile?.role || 'unknown',
+              action:      'SIGN_IN',
+              entity_type: 'auth',
+              entity_id:   null,
+              station_id:  null,
+              old_value:   null,
+              new_value:   null,
+            }),
+          });
+        } catch (e) {
+          console.error('Audit log sign-in error:', e);
+        }
       };
       init();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
-  // Load data when session and activeStation are available
   useEffect(() => {
     if (session && activeStation) {
       loadData();
@@ -135,19 +157,17 @@ function App() {
   }, [session, activeStation]);
 
   async function handleSignOut() {
+    await log('SIGN_OUT', 'auth', null, null, null);
     try {
       await supabase.auth.signOut({ scope: 'global' });
     } catch (e) {
       console.log('Sign out error:', e);
     }
-    // Clear all storage
     localStorage.clear();
     sessionStorage.clear();
-    // Clear cookies
     document.cookie.split(';').forEach(c => {
       document.cookie = c.trim().split('=')[0] + '=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/';
     });
-    // Force hard reload to login page
     window.location.href = window.location.origin + '?signout=' + Date.now();
   }
 
@@ -165,6 +185,8 @@ function App() {
     minHeight:     '100vh',
     paddingBottom: isMobile ? '70px' : '0',
   };
+
+  const totalOpenAlerts = alertSummary.critical + alertSummary.warning + alertSummary.info;
 
   if (authLoading) {
     return (
@@ -192,6 +214,7 @@ function App() {
           setDarkMode={setDarkMode}
           user={session.user}
           onSignOut={handleSignOut}
+          alertCount={totalOpenAlerts}
         />
       )}
 
@@ -201,6 +224,7 @@ function App() {
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           darkMode={darkMode}
+          alertCount={totalOpenAlerts}
         />
       )}
 
@@ -214,6 +238,9 @@ function App() {
               {activeTab === 'dashboard'      && '📊 Live Dashboard'}
               {activeTab === 'deliveries'     && '🚚 Deliveries'}
               {activeTab === 'reconciliation' && '📋 Reconciliation'}
+              {activeTab === 'shifts'         && '⏱ Shift Management'}
+              {activeTab === 'pump-vs-dip'    && '🔢 Pump vs Dip'}
+              {activeTab === 'alerts'         && '🔔 Alerts'}
               {activeTab === 'reports'        && '📈 Reports'}
             </div>
             {!isMobile && stations.length > 1 && (
@@ -234,6 +261,14 @@ function App() {
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {totalOpenAlerts > 0 && (
+              <button
+                onClick={() => setActiveTab('alerts')}
+                style={{ padding: '5px 12px', background: alertSummary.critical > 0 ? '#e74c3c' : '#f39c12', color: '#fff', border: 'none', borderRadius: '20px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+              >
+                🔔 {totalOpenAlerts} alert{totalOpenAlerts > 1 ? 's' : ''}
+              </button>
+            )}
             {lastUpdated && !isMobile && (
               <div style={{ fontSize: '12px', color: colors.subtext }}>
                 Updated {lastUpdated}
@@ -274,6 +309,18 @@ function App() {
           {/* ── DASHBOARD ── */}
           {activeTab === 'dashboard' && (
             <div>
+              {alertSummary.critical > 0 && (
+                <div style={styles.alertRed}>
+                  🚨 <strong>{alertSummary.critical} critical alert{alertSummary.critical > 1 ? 's' : ''}</strong> require immediate attention.{' '}
+                  <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setActiveTab('alerts')}>View alerts →</span>
+                </div>
+              )}
+              {alertSummary.warning > 0 && (
+                <div style={styles.alertAmber}>
+                  ⚠️ <strong>{alertSummary.warning} warning{alertSummary.warning > 1 ? 's' : ''}</strong> need attention.{' '}
+                  <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setActiveTab('alerts')}>View alerts →</span>
+                </div>
+              )}
               {Array.isArray(tanks) && tanks.filter(t => parseFloat(t.fill_pct) < 20).map(t => (
                 <div key={t.id} style={styles.alertRed}>
                   🚨 <strong>Tank {t.tank_number}</strong> critically low — {parseFloat(t.fill_pct).toFixed(1)}%
@@ -292,10 +339,17 @@ function App() {
                 gap: isMobile ? '8px' : '16px',
                 marginBottom: '24px',
               }}>
-                <SummaryCard label="Total NSV"       value={Array.isArray(tanks) ? tanks.reduce((s, t) => s + parseFloat(t.nsv_litres || 0), 0).toFixed(0) + ' L' : '0 L'} icon="⛽" color="#4CAF50" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
-                <SummaryCard label="Active Tanks"    value={Array.isArray(tanks) ? tanks.length + ' tanks' : '0 tanks'} icon="🛢" color="#3498db" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
-                <SummaryCard label="Deliveries"      value={(Array.isArray(deliveries) ? deliveries.length : 0) + ' total'} icon="🚚" color="#f39c12" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
-                <SummaryCard label="Avg Temp"        value={Array.isArray(tanks) && tanks.length ? (tanks.reduce((s, t) => s + parseFloat(t.temperature_c || 0), 0) / tanks.length).toFixed(1) + ' °C' : '—'} icon="🌡" color="#e74c3c" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                <SummaryCard label="Total NSV"    value={Array.isArray(tanks) ? tanks.reduce((s, t) => s + parseFloat(t.nsv_litres || 0), 0).toFixed(0) + ' L' : '0 L'} icon="⛽" color="#4CAF50" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                <SummaryCard label="Active Tanks" value={Array.isArray(tanks) ? tanks.length + ' tanks' : '0 tanks'} icon="🛢" color="#3498db" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                <SummaryCard label="Deliveries"   value={(Array.isArray(deliveries) ? deliveries.length : 0) + ' total'} icon="🚚" color="#f39c12" bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile} />
+                <SummaryCard
+                  label="Open Alerts"
+                  value={totalOpenAlerts + ' open'}
+                  icon="🔔"
+                  color={totalOpenAlerts > 0 ? (alertSummary.critical > 0 ? '#e74c3c' : '#f39c12') : '#27ae60'}
+                  bg={colors.card} text={colors.text} sub={colors.subtext} mobile={isMobile}
+                  onClick={() => setActiveTab('alerts')}
+                />
               </div>
 
               {/* Tank gauges */}
@@ -343,6 +397,8 @@ function App() {
                   onSuccess={() => { setShowForm(false); loadData(); }}
                   api={API}
                   stationId={activeStation}
+                  session={session}
+                  userProfile={userProfile}
                 />
               )}
 
@@ -383,6 +439,29 @@ function App() {
             </div>
           )}
 
+          {/* ── SHIFTS ── */}
+          {activeTab === 'shifts' && (
+            <ShiftManager tanks={tanks} darkMode={darkMode} />
+          )}
+
+          {/* ── PUMP VS DIP ── */}
+          {activeTab === 'pump-vs-dip' && (
+            <PumpVsDip darkMode={darkMode} />
+          )}
+
+          {/* ── ALERTS ── */}
+          {activeTab === 'alerts' && (
+            <AlertsPanel darkMode={darkMode} />
+          )}
+
+          {/* ── AUDIT LOG ── */}
+          {activeTab === 'audit' && (
+            <div>
+              <div style={{ ...styles.sectionTitle, color: colors.text, marginBottom: '16px' }}>🔍 Audit Log</div>
+              <AuditLog api={API} activeStation={activeStation} darkMode={darkMode} />
+            </div>
+          )}
+
           {/* ── REPORTS ── */}
           {activeTab === 'reports' && (
             <div>
@@ -403,9 +482,12 @@ function App() {
   );
 }
 
-function SummaryCard({ label, value, icon, color, bg, text, sub, mobile }) {
+function SummaryCard({ label, value, icon, color, bg, text, sub, mobile, onClick }) {
   return (
-    <div style={{ background: bg, borderRadius: '12px', padding: mobile ? '14px' : '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+    <div
+      onClick={onClick}
+      style={{ background: bg, borderRadius: '12px', padding: mobile ? '14px' : '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', cursor: onClick ? 'pointer' : 'default' }}
+    >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <div style={{ fontSize: mobile ? '11px' : '13px', color: sub, marginBottom: '6px' }}>{label}</div>

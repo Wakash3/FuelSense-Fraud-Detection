@@ -5,6 +5,10 @@ const navItems = [
   { id: 'deliveries',     icon: '🚚', label: 'Deliveries' },
   { id: 'reconciliation', icon: '📋', label: 'Reconciliation' },
   { id: 'reports',        icon: '📈', label: 'Reports' },
+  { id: 'audit',          icon: '🔍', label: 'Audit Log' },
+  { id: 'shifts',      icon: '⏱',  label: 'Shifts' },
+  { id: 'pump-vs-dip', icon: '🔢', label: 'Pump vs Dip' },
+  { id: 'alerts',      icon: '🔔', label: 'Alerts' },
 ];
 
 function Sidebar({ activeTab, setActiveTab, darkMode, setDarkMode, user, onSignOut }) {
