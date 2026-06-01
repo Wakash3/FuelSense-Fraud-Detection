@@ -10,6 +10,9 @@ const BASE_URL = IS_SANDBOX
   ? 'https://cybqa.pesapal.com/pesapalv3'
   : 'https://pay.pesapal.com/v3';
 
+// Log which environment we're using
+console.log('[PESAPAL] Environment:', IS_SANDBOX ? 'SANDBOX' : 'LIVE', '| Base URL:', BASE_URL);
+
 let cachedToken     = null;
 let tokenExpiry     = null;
 
@@ -65,6 +68,7 @@ async function registerIPN(callbackUrl) {
 // ── Submit Order ─────────────────────────────────────────────
 async function submitOrder(order) {
   const token = await getToken();
+  console.log('[PESAPAL] Submitting order:', JSON.stringify(order));
 
   const res = await fetch(BASE_URL + '/api/Transactions/SubmitOrderRequest', {
     method:  'POST',
@@ -82,6 +86,7 @@ async function submitOrder(order) {
     throw new Error('Pesapal order failed: ' + JSON.stringify(data));
   }
 
+  console.log('[PESAPAL] Order submitted successfully, redirect URL:', data.redirect_url);
   return data;
 }
 
@@ -99,7 +104,9 @@ async function getTransactionStatus(orderTrackingId) {
     }
   );
 
-  return await res.json();
+  const data = await res.json();
+  console.log('[PESAPAL] Transaction status retrieved for:', orderTrackingId, '| Status:', data.payment_status_description);
+  return data;
 }
 
 module.exports = { getToken, registerIPN, submitOrder, getTransactionStatus };
