@@ -324,11 +324,38 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
 // ── GET /api/alerts ───────────────────────────────────────────────────────
 app.get('/api/alerts', async (req, res) => {
   try {
-    const client = await getDb();
-    const status = req.query.status || null;
-    const limit  = parseInt(req.query.limit) || 50;
-    const alerts = await getAlerts(client, { status, limit });
-    res.json(alerts);
+    const client    = await getDb();
+    const status    = req.query.status || null;
+    const limit     = parseInt(req.query.limit) || 50;
+    const stationId = req.query.station_id;
+
+    const conditions = [];
+    const params     = [];
+
+    if (status) {
+      params.push(status);
+      conditions.push(`a.status = $${params.length}`);
+    }
+
+    if (stationId) {
+      params.push(stationId);
+      conditions.push(`t.station_id = $${params.length}`);
+    }
+
+    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    params.push(limit);
+    const result = await client.query(
+      `SELECT a.*, t.tank_number, t.fuel_type
+       FROM alerts a
+       LEFT JOIN tanks t ON t.id = a.tank_id
+       ${where}
+       ORDER BY a.created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+
+    res.json(result.rows);
   } catch (err) {
     console.error('[API] GET /api/alerts error:', err.message);
     res.status(500).json({ error: err.message });
