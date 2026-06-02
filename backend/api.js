@@ -619,6 +619,69 @@ app.post('/api/payments/initiate', async (req, res) => {
   }
 });
 
+// ── POST /api/payments/test ─────────────────────────────────────────────────
+app.post('/api/payments/test', async (req, res) => {
+  const { station_id, amount, user_email, user_name, phone } = req.body;
+
+  if (!station_id || !amount || !user_email) {
+    return res.status(400).json({ error: 'Missing required fields: station_id, amount, user_email' });
+  }
+
+  try {
+    const client = await getDb();
+    const pesapal = require('./pesapal');
+
+    console.log('[TEST PAYMENT] Amount:', amount, 'for station:', station_id);
+
+    // Create payment record
+    const payRes = await client.query(
+      `INSERT INTO payments (station_id, amount_kes, billing_cycle, plan_name, status)
+       VALUES ($1, $2, 'monthly', 'TEST_PAYMENT', 'pending') RETURNING id`,
+      [station_id, amount]
+    );
+    const paymentId = payRes.rows[0].id;
+
+    // Register IPN
+    const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
+    const ipnId = await pesapal.registerIPN(callbackUrl).catch(() => 'default');
+
+    // Submit order to Pesapal
+    const order = {
+      id:                   paymentId,
+      currency:             'KES',
+      amount:               parseFloat(amount),
+      description:          `FuelSense Test Payment - KES ${amount}`,
+      callback_url:         process.env.FRONTEND_URL + '/payment-success',
+      notification_id:      ipnId,
+      billing_address: {
+        email_address:  user_email,
+        phone_number:   phone || '',
+        country_code:   'KE',
+        first_name:     user_name?.split(' ')[0] || 'Customer',
+        last_name:      user_name?.split(' ')[1] || '',
+      },
+    };
+
+    const pesapalRes = await pesapal.submitOrder(order);
+
+    // Update payment with Pesapal order ID
+    await client.query(
+      `UPDATE payments SET pesapal_order_id = $1 WHERE id = $2`,
+      [pesapalRes.order_tracking_id, paymentId]
+    );
+
+    res.json({
+      payment_id:   paymentId,
+      redirect_url: pesapalRes.redirect_url,
+      amount,
+    });
+
+  } catch (err) {
+    console.error('[TEST PAYMENT] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /api/payments/callback ──────────────────────────────────────────────
 app.get('/api/payments/callback', async (req, res) => {
   const { OrderTrackingId, OrderMerchantReference } = req.query;
