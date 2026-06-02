@@ -52,21 +52,32 @@ async function openShift(db, tankId, attendantName = null) {
     [tankId]
   );
 
-  if (!readingRes.rows.length) {
-    throw new Error('No readings available to open shift for tank ' + tankId);
-  }
+const openingReading = readingRes.rows.length ? readingRes.rows[0] : null;
 
-  const openingReading = readingRes.rows[0];
-
+if (openingReading) {
   await db.query(
     'UPDATE atg_readings SET is_locked = TRUE WHERE id = $1',
     [openingReading.id]
   );
+}
 
   const result = await db.query(
     `INSERT INTO shifts
        (tank_id, shift_name, shift_date, started_at,
-        opening_reading_id, opening_nsv,
+        const result = await db.query(
+  `INSERT INTO shifts
+     (tank_id, shift_name, shift_date, started_at,
+      opening_reading_id, opening_nsv,
+      status, attendant_name)
+   VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)
+   RETURNING id`,
+  [
+    tankId, shiftName, shiftDate, now,
+    openingReading ? openingReading.id : null,
+    openingReading ? openingReading.nsv_litres : null,
+    attendantName,
+  ]
+);
         status, attendant_name)
      VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)
      RETURNING id`,
