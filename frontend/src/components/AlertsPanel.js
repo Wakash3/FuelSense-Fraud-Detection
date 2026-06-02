@@ -17,7 +17,7 @@ const TYPE_LABELS = {
   reading_gap:          '📡 Reading Gap',
 };
 
-export default function AlertsPanel({ darkMode }) {
+export default function AlertsPanel({ darkMode, stationId }) {
   const [alerts,   setAlerts]   = useState([]);
   const [filter,   setFilter]   = useState('open');
   const [loading,  setLoading]  = useState(true);
@@ -34,9 +34,10 @@ export default function AlertsPanel({ darkMode }) {
   async function loadAlerts() {
     setLoading(true);
     try {
-      const url = filter === 'all'
+      let url = filter === 'all'
         ? `${API}/api/alerts?limit=100`
         : `${API}/api/alerts?status=${filter}&limit=100`;
+      if (stationId) url += `&station_id=${stationId}`;
       const res  = await fetch(url);
       const data = await res.json();
       setAlerts(Array.isArray(data) ? data : []);
@@ -48,7 +49,7 @@ export default function AlertsPanel({ darkMode }) {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadAlerts(); }, [filter]);
+  useEffect(() => { loadAlerts(); }, [filter, stationId]);
 
   async function handleAcknowledge(alertId) {
     if (!ackName.trim()) {
@@ -109,7 +110,9 @@ export default function AlertsPanel({ darkMode }) {
       ) : alerts.length === 0 ? (
         <div style={{ background: colors.card, borderRadius: '12px', padding: '60px 24px', textAlign: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>✅</div>
-          <div style={{ fontSize: '16px', fontWeight: '500', color: colors.text, marginBottom: '8px' }}>No {filter === 'all' ? '' : filter} alerts</div>
+          <div style={{ fontSize: '16px', fontWeight: '500', color: colors.text, marginBottom: '8px' }}>
+            No {filter === 'all' ? '' : filter} alerts
+          </div>
           <div style={{ fontSize: '13px', color: colors.subtext }}>All systems operating normally.</div>
         </div>
       ) : (
