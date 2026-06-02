@@ -6,6 +6,7 @@ function Pricing({ api, activeStation, session, darkMode }) {
   const [billing,      setBilling]      = useState('monthly');
   const [loading,      setLoading]      = useState(false);
   const [selected,     setSelected]     = useState(null);
+  const [error,        setError]        = useState(null);
 
   const bg   = darkMode ? '#1e1e2e' : '#fff';
   const text = darkMode ? '#e0e0e0' : '#1a1a2e';
@@ -19,28 +20,45 @@ function Pricing({ api, activeStation, session, darkMode }) {
     }
   }, [api, activeStation]);
 
-  async function handleSubscribe(plan) {
+  async function handleSubscribe(plan, isTest = false) {
     setLoading(true);
     setSelected(plan.id);
+    setError(null);
+    
     try {
+      const payload = {
+        station_id:    activeStation,
+        plan_id:       plan.id,
+        billing_cycle: billing,
+        user_email:    session?.user?.email,
+        user_name:     session?.user?.email?.split('@')[0],
+      };
+      
+      // For test payment, override amount
+      if (isTest) {
+        payload.test_amount = plan.price_monthly;
+      }
+      
       const res = await fetch(api + '/api/payments/initiate', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          station_id:    activeStation,
-          plan_id:       plan.id,
-          billing_cycle: billing,
-          user_email:    session?.user?.email,
-          user_name:     session?.user?.email?.split('@')[0],
-        }),
+        body:    JSON.stringify(payload),
       });
+      
       const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Payment initiation failed');
+      }
+      
       if (data.redirect_url) {
         window.location.href = data.redirect_url;
       } else {
         alert('Payment error: ' + (data.error || 'Unknown error'));
       }
     } catch (err) {
+      console.error('Payment error:', err);
+      setError(err.message);
       alert('Payment error: ' + err.message);
     }
     setLoading(false);
@@ -56,6 +74,13 @@ function Pricing({ api, activeStation, session, darkMode }) {
 
   return (
     <div>
+      {/* Error display */}
+      {error && (
+        <div style={{ ...styles.errorBox, marginBottom: '20px' }}>
+          <strong>Error:</strong> {error}
+        </div>
+      )}
+
       {/* Current subscription */}
       {subscription && (
         <div style={{ ...styles.subCard, background: bg }}>
@@ -117,7 +142,7 @@ function Pricing({ api, activeStation, session, darkMode }) {
             <div key={plan.id} style={{
               ...styles.planCard,
               background:  bg,
-              border:      isPopular ? '2px solid #4CAF50' : '1px solid #e0e0e0',
+              border:      isPopular ? '2px solid #4CAF50' : `1px solid ${darkMode ? '#2a2a3e' : '#e0e0e0'}`,
               position:    'relative',
             }}>
               {isPopular && (
@@ -144,7 +169,7 @@ function Pricing({ api, activeStation, session, darkMode }) {
 
               <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px', }}>
                 {features?.map((f, fi) => (
-                  <li key={fi} style={{ fontSize: '13px', color: sub, padding: '6px 0', borderBottom: '1px solid #f0f0f0', display: 'flex', gap: '8px' }}>
+                  <li key={fi} style={{ fontSize: '13px', color: sub, padding: '6px 0', borderBottom: `1px solid ${darkMode ? '#2a2a3e' : '#f0f0f0'}`, display: 'flex', gap: '8px' }}>
                     <span style={{ color: '#4CAF50' }}>✓</span> {f}
                   </li>
                 ))}
@@ -156,7 +181,7 @@ function Pricing({ api, activeStation, session, darkMode }) {
                   background:  isPopular ? '#4CAF50' : '#1a1a2e',
                   opacity:     loading && selected === plan.id ? 0.7 : 1,
                 }}
-                onClick={() => handleSubscribe(plan)}
+                onClick={() => handleSubscribe(plan, false)}
                 disabled={loading}
               >
                 {loading && selected === plan.id ? 'Redirecting...' : 'Subscribe — Pay with M-Pesa'}
@@ -176,14 +201,19 @@ function Pricing({ api, activeStation, session, darkMode }) {
 
       {/* Test payment button — remove in production */}
       <div style={{ marginTop: '24px', padding: '16px', background: '#fff3cd', borderRadius: '8px', border: '1px solid #ffc107' }}>
-        <div style={{ fontSize: '13px', fontWeight: '600', color: '#856404', marginBottom: '8px' }}>🧪 Test Payment (KES 1)</div>
-        <div style={{ fontSize: '12px', color: '#856404', marginBottom: '12px' }}>Use this to verify the payment flow works end to end.</div>
+        <div style={{ fontSize: '13px', fontWeight: '600', color: '#856404', marginBottom: '8px' }}>🧪 Test Payment (KES 10 Minimum)</div>
+        <div style={{ fontSize: '12px', color: '#856404', marginBottom: '12px' }}>
+          Use this to verify the payment flow works end to end. Minimum amount is KES 10.
+        </div>
         <button
           style={{ ...styles.subscribeBtn, background: '#f39c12', width: 'auto', padding: '8px 20px' }}
-          onClick={() => handleSubscribe({ ...plans[0], price_monthly: '1', price_annual: '1' })}
-          disabled={loading}
+          onClick={() => {
+            const testPlan = { ...plans[0], id: 'test', price_monthly: '10', price_annual: '10' };
+            handleSubscribe(testPlan, true);
+          }}
+          disabled={loading || !plans.length}
         >
-          Test Pay KES 1
+          Test Pay KES 10
         </button>
       </div>
     </div>
@@ -199,6 +229,7 @@ const styles = {
   planCard:     { borderRadius: '12px', padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' },
   popularBadge: { position: 'absolute', top: '-12px', left: '50%', transform: 'translateX(-50%)', background: '#4CAF50', color: '#fff', padding: '3px 12px', borderRadius: '99px', fontSize: '11px', fontWeight: '700', whiteSpace: 'nowrap' },
   subscribeBtn: { width: '100%', padding: '12px', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
+  errorBox:     { background: '#fdecea', border: '1px solid #f5c6cb', color: '#721c24', padding: '12px 16px', borderRadius: '8px', fontSize: '13px' },
 };
 
 export default Pricing;
