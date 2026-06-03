@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
@@ -19,13 +19,15 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
   const [loading,        setLoading]       = useState(true);
   const [openingShift,   setOpeningShift]  = useState(false);
   const [closingShiftId, setClosingShiftId] = useState(null);
-
-  const [openForm, setOpenForm] = useState({ tank_id: '', attendant_name: '' });
-  const [closeForm, setCloseForm] = useState({
+  const [tankId,         setTankId]        = useState('');
+  const [attendantName,  setAttendantName] = useState('');
+  const [closeForm,      setCloseForm]     = useState({
     pump_meter_opening: '',
     pump_meter_closing: '',
     notes: '',
   });
+
+  const stationIdRef = useRef(stationId);
 
   const colors = {
     card:    darkMode ? '#1e1e2e' : '#ffffff',
@@ -35,10 +37,12 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
     input:   darkMode ? '#2a2a3e' : '#f8f8f8',
   };
 
-  async function loadShifts() {
+  async function loadShifts(sid) {
     setLoading(true);
     try {
-      const res  = await fetch(`${API}/api/shifts?limit=30${stationId ? '&station_id=' + stationId : ''}`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const id   = sid !== undefined ? sid : stationIdRef.current;
+      const res  = await fetch(`${API}/api/shifts?limit=30${id ? '&station_id=' + id : ''}`);
       const data = await res.json();
       setShifts(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -48,17 +52,19 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
     }
   }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadShifts(); }, [stationId]);
+  useEffect(() => {
+    stationIdRef.current = stationId;
+    loadShifts(stationId);
+  }, [stationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleOpenShift() {
-    if (!openForm.tank_id) { alert('Please select a tank.'); return; }
-    if (!openForm.attendant_name.trim()) { alert('Please enter attendant name.'); return; }
+    if (!tankId) { alert('Please select a tank.'); return; }
+    if (!attendantName.trim()) { alert('Please enter attendant name.'); return; }
     try {
       const res  = await fetch(`${API}/api/shifts/open`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(openForm),
+        body:    JSON.stringify({ tank_id: tankId, attendant_name: attendantName }),
       });
       const data = await res.json();
       if (data.alreadyOpen) {
@@ -66,8 +72,9 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
       } else {
         alert('Shift opened successfully!');
         setOpeningShift(false);
-        setOpenForm({ tank_id: '', attendant_name: '' });
-        loadShifts();
+        setTankId('');
+        setAttendantName('');
+        await loadShifts(stationIdRef.current);
       }
     } catch (err) {
       console.error('Failed to open shift:', err);
@@ -94,7 +101,7 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
       }
       setClosingShiftId(null);
       setCloseForm({ pump_meter_opening: '', pump_meter_closing: '', notes: '' });
-      loadShifts();
+      await loadShifts(stationIdRef.current);
     } catch (err) {
       console.error('Failed to close shift:', err);
       alert('Error closing shift.');
@@ -132,8 +139,8 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
             <div>
               <label style={labelStyle}>Tank</label>
               <select
-                value={openForm.tank_id}
-                onChange={e => setOpenForm({ ...openForm, tank_id: e.target.value })}
+                value={tankId}
+                onChange={e => setTankId(e.target.value)}
                 style={inputStyle}
               >
                 <option value="">Select tank...</option>
@@ -148,8 +155,8 @@ export default function ShiftManager({ tanks, darkMode, stationId }) {
               <label style={labelStyle}>Attendant Name</label>
               <input
                 type="text"
-                value={openForm.attendant_name}
-                onChange={e => setOpenForm({ ...openForm, attendant_name: e.target.value })}
+                value={attendantName}
+                onChange={e => setAttendantName(e.target.value)}
                 placeholder="e.g. John Kamau"
                 style={inputStyle}
               />
