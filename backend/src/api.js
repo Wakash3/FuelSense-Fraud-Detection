@@ -19,6 +19,23 @@ app.get('/api/ping', (req, res) => {
   res.json({ message: 'pong', timestamp: new Date().toISOString() });
 });
 
+// ── Debug endpoint to check Pesapal configuration ───────────────────────────
+app.get('/api/debug-pesapal', (req, res) => {
+  const IS_SANDBOX = process.env.PESAPAL_ENV !== 'live';
+  const BASE_URL = IS_SANDBOX
+    ? 'https://cybqa.pesapal.com/pesapalv3'
+    : 'https://pay.pesapal.com/v3';
+  res.json({
+    pesapal_env: process.env.PESAPAL_ENV,
+    is_sandbox: IS_SANDBOX,
+    base_url: BASE_URL,
+    consumer_key_exists: !!process.env.PESAPAL_CONSUMER_KEY,
+    consumer_secret_exists: !!process.env.PESAPAL_CONSUMER_SECRET,
+    api_base_url: process.env.API_BASE_URL,
+    frontend_url: process.env.FRONTEND_URL
+  });
+});
+
 let db = null;
 
 async function getDb() {
@@ -324,38 +341,11 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
 // ── GET /api/alerts ───────────────────────────────────────────────────────
 app.get('/api/alerts', async (req, res) => {
   try {
-    const client    = await getDb();
-    const status    = req.query.status || null;
-    const limit     = parseInt(req.query.limit) || 50;
-    const stationId = req.query.station_id;
-
-    const conditions = [];
-    const params     = [];
-
-    if (status) {
-      params.push(status);
-      conditions.push(`a.status = $${params.length}`);
-    }
-
-    if (stationId) {
-      params.push(stationId);
-      conditions.push(`t.station_id = $${params.length}`);
-    }
-
-    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-
-    params.push(limit);
-    const result = await client.query(
-      `SELECT a.*, t.tank_number, t.fuel_type
-       FROM alerts a
-       LEFT JOIN tanks t ON t.id = a.tank_id
-       ${where}
-       ORDER BY a.created_at DESC
-       LIMIT $${params.length}`,
-      params
-    );
-
-    res.json(result.rows);
+    const client = await getDb();
+    const status = req.query.status || null;
+    const limit  = parseInt(req.query.limit) || 50;
+    const alerts = await getAlerts(client, { status, limit });
+    res.json(alerts);
   } catch (err) {
     console.error('[API] GET /api/alerts error:', err.message);
     res.status(500).json({ error: err.message });
@@ -399,27 +389,9 @@ app.post('/api/alerts/:id/acknowledge', async (req, res) => {
 // ── GET /api/shifts ───────────────────────────────────────────────────────
 app.get('/api/shifts', async (req, res) => {
   try {
-    const client    = await getDb();
-    const limit     = parseInt(req.query.limit) || 50;
-    const stationId = req.query.station_id;
-
-    let query = `
-      SELECT s.*, t.tank_number, t.fuel_type
-      FROM shifts s
-      JOIN tanks t ON t.id = s.tank_id`;
-
-    const params = [];
-
-    if (stationId) {
-      params.push(stationId);
-      query += ` WHERE t.station_id = $${params.length}`;
-    }
-
-    params.push(limit);
-    query += ` ORDER BY s.shift_date DESC, s.started_at DESC LIMIT $${params.length}`;
-
-    const result = await client.query(query, params);
-    res.json(result.rows);
+    const client = await getDb();
+    const shifts = await getAllShifts(client, parseInt(req.query.limit) || 50);
+    res.json(shifts);
   } catch (err) {
     console.error('[API] GET /api/shifts error:', err.message);
     res.status(500).json({ error: err.message });
@@ -471,41 +443,58 @@ app.post('/api/shifts/:id/close', async (req, res) => {
 // ── GET /api/pump-vs-dip ──────────────────────────────────────────────────
 app.get('/api/pump-vs-dip', async (req, res) => {
   try {
-    const client    = await getDb();
-    const stationId = req.query.station_id;
-
-    let query = `
-      SELECT
-        s.id,
-        s.shift_name,
-        s.shift_date,
-        s.opening_nsv,
-        s.closing_nsv,
-        s.pump_meter_sales,
-        s.dip_sales,
-        s.variance_litres,
-        s.variance_pct,
-        s.status,
-        s.attendant_name,
-        t.tank_number,
-        t.fuel_type
-      FROM shifts s
-      JOIN tanks t ON t.id = s.tank_id
-      WHERE s.status IN ('closed', 'flagged')
-        AND s.dip_sales IS NOT NULL`;
-
-    const params = [];
-
-    if (stationId) {
-      params.push(stationId);
-      query += ` AND t.station_id = $${params.length}`;
-    }
-
-    query += ` ORDER BY s.shift_date DESC, s.started_at DESC LIMIT 60`;
-
-    const result = await client.query(query, params);
+    const client = await getDb();
+    const result = await client.query(
+      `SELECT
+         s.id,
+         s.shift_name,
+         s.shift_date,
+         s.opening_nsv,
+         s.closing_nsv,
+         s.pump_meter_sales,
+         s.dip_sales,
+         s.variance_litres,
+         s.variance_pct,
+         s.status,
+         s.attendant_name,
+         t.tank_number,
+         t.fuel_type
+       FROM shifts s
+       JOIN tanks t ON t.id = s.tank_id
+       WHERE s.status IN ('closed', 'flagged')
+         AND s.dip_sales IS NOT NULL
+       ORDER BY s.shift_date DESC, s.started_at DESC
+       LIMIT 60`
+    );
     res.json(result.rows);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/audit-log ─────────────────────────────────────────────────────
+app.post('/api/audit-log', async (req, res) => {
+  const { user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value } = req.body;
+  if (!user_email || !action || !entity_type) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  try {
+    const client = await getDb();
+    await client.query(
+      `INSERT INTO audit_log
+         (user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value, ip_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        user_email, user_role || null, action, entity_type,
+        entity_id || null, station_id || null,
+        old_value ? JSON.stringify(old_value) : null,
+        new_value ? JSON.stringify(new_value) : null,
+        req.headers['x-forwarded-for'] || req.socket.remoteAddress || null,
+      ]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[API] audit-log error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -608,9 +597,14 @@ app.post('/api/payments/initiate', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // Register IPN
+    // Register IPN for this payment
     const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
-    const ipnId = await pesapal.registerIPN(callbackUrl).catch(() => 'default');
+    let ipnId = 'default';
+    try {
+      ipnId = await pesapal.registerIPN(callbackUrl);
+    } catch (e) {
+      console.warn('[PESAPAL] IPN registration failed, using default:', e.message);
+    }
 
     // Submit order to Pesapal
     const order = {
@@ -689,9 +683,14 @@ app.post('/api/payments/test', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // Register IPN
+    // Register IPN for this test payment
     const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
-    const ipnId = await pesapal.registerIPN(callbackUrl).catch(() => 'default');
+    let ipnId = 'default';
+    try {
+      ipnId = await pesapal.registerIPN(callbackUrl);
+    } catch (e) {
+      console.warn('[PESAPAL] IPN registration failed, using default:', e.message);
+    }
 
     // Submit order to Pesapal
     const order = {
