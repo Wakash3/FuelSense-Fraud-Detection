@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
 
 function PaymentResult({ darkMode }) {
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const [status, setStatus] = useState('processing');
   const [countdown, setCountdown] = useState(5);
 
@@ -15,27 +12,38 @@ function PaymentResult({ darkMode }) {
   };
 
   useEffect(() => {
-    const paymentStatus = searchParams.get('status');
-    const orderTrackingId = searchParams.get('OrderTrackingId');
+    // Get status from URL params or sessionStorage
+    const urlParams = new URLSearchParams(window.location.search);
+    let paymentStatus = urlParams.get('status');
+    let orderTrackingId = urlParams.get('OrderTrackingId');
+    
+    // If not in URL, check sessionStorage
+    if (!paymentStatus) {
+      paymentStatus = sessionStorage.getItem('paymentStatus');
+      orderTrackingId = sessionStorage.getItem('orderTrackingId');
+    }
     
     console.log('[PaymentResult] Status:', paymentStatus);
     console.log('[PaymentResult] OrderTrackingId:', orderTrackingId);
 
     if (paymentStatus === 'Completed') {
       setStatus('success');
-    } else if (paymentStatus === 'Failed' || paymentStatus === 'Cancelled') {
+    } else if (paymentStatus === 'Failed' || paymentStatus === 'Cancelled' || paymentStatus === 'Error') {
       setStatus('failed');
     } else {
-      // Check if we have a pending status
       setStatus('processing');
     }
 
-    // Auto-redirect after 5 seconds on success/failure
+    // Clear sessionStorage after reading
+    sessionStorage.removeItem('paymentStatus');
+    sessionStorage.removeItem('orderTrackingId');
+
+    // Auto-redirect to billing after 5 seconds on success/failure
     const timer = setInterval(() => {
       setCountdown(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          navigate('/billing');
+          window.location.href = '/?tab=billing';
           return 0;
         }
         return prev - 1;
@@ -43,9 +51,8 @@ function PaymentResult({ darkMode }) {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [searchParams, navigate]);
+  }, []);
 
-  // Styles
   const containerStyle = {
     maxWidth: '500px',
     margin: '50px auto',
@@ -67,6 +74,10 @@ function PaymentResult({ darkMode }) {
     fontWeight: '600',
     cursor: 'pointer',
     marginTop: '20px',
+  };
+
+  const goToBilling = () => {
+    window.location.href = '/?tab=billing';
   };
 
   if (status === 'processing') {
@@ -95,7 +106,7 @@ function PaymentResult({ darkMode }) {
         <p style={{ color: colors.subtext, fontSize: '14px', marginTop: '20px' }}>
           Redirecting to billing page in {countdown} seconds...
         </p>
-        <button style={buttonStyle} onClick={() => navigate('/billing')}>
+        <button style={buttonStyle} onClick={goToBilling}>
           Go to Billing Now
         </button>
       </div>
@@ -115,7 +126,7 @@ function PaymentResult({ darkMode }) {
       <p style={{ color: colors.subtext, fontSize: '12px', marginBottom: '20px' }}>
         Redirecting in {countdown} seconds...
       </p>
-      <button style={buttonStyle} onClick={() => navigate('/billing')}>
+      <button style={buttonStyle} onClick={goToBilling}>
         Back to Billing
       </button>
     </div>

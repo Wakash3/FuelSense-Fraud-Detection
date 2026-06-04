@@ -785,11 +785,14 @@ app.get('/api/payments/callback', async (req, res) => {
       console.log('[PESAPAL] Payment completed for station:', payment?.station_id);
     }
 
-    res.redirect(process.env.FRONTEND_URL + '/payment-success?status=' + status.payment_status_description);
+    // UPDATED: Redirect to frontend with tab=payment-result parameter
+    const redirectUrl = `${process.env.FRONTEND_URL}/?tab=payment-result&status=${encodeURIComponent(status.payment_status_description)}&OrderTrackingId=${OrderTrackingId}`;
+    res.redirect(redirectUrl);
 
   } catch (err) {
     console.error('[API] payment callback error:', err.message);
-    res.redirect(process.env.FRONTEND_URL + '?payment=error');
+    const errorRedirectUrl = `${process.env.FRONTEND_URL}/?tab=payment-result&status=Error&error=${encodeURIComponent(err.message)}`;
+    res.redirect(errorRedirectUrl);
   }
 });
 

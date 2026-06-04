@@ -53,6 +53,27 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Check for URL parameters on initial load (for payment callback)
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const tabParam = urlParams.get('tab');
+    const statusParam = urlParams.get('status');
+    const orderIdParam = urlParams.get('OrderTrackingId');
+    
+    if (tabParam === 'payment-result') {
+      setActiveTab('payment-result');
+      // Store payment status in sessionStorage for the result page
+      if (statusParam) {
+        sessionStorage.setItem('paymentStatus', statusParam);
+      }
+      if (orderIdParam) {
+        sessionStorage.setItem('orderTrackingId', orderIdParam);
+      }
+      // Clean up URL without reloading the page
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
   async function loadUserProfile() {
     if (!session) return;
     try {
