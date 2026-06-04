@@ -597,16 +597,9 @@ app.post('/api/payments/initiate', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // ALWAYS register a fresh IPN - do NOT use cache
-    const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
-    let ipnId = 'default';
-    try {
-      ipnId = await pesapal.registerIPN(callbackUrl);
-      console.log('[PAYMENT] Fresh IPN registered:', ipnId);
-    } catch (e) {
-      console.error('[PESAPAL] IPN registration failed:', e.message);
-      return res.status(500).json({ error: 'IPN registration failed: ' + e.message });
-    }
+    // Skip IPN registration - use default
+    const ipnId = 'default';
+    console.log('[PAYMENT] Using default IPN ID:', ipnId);
 
     // Submit order to Pesapal
     const order = {
@@ -683,16 +676,9 @@ app.post('/api/payments/test', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // ALWAYS register a fresh IPN
-    const callbackUrl = process.env.API_BASE_URL + '/api/payments/callback';
-    let ipnId = 'default';
-    try {
-      ipnId = await pesapal.registerIPN(callbackUrl);
-      console.log('[TEST PAYMENT] Fresh IPN registered:', ipnId);
-    } catch (e) {
-      console.error('[PESAPAL] IPN registration failed:', e.message);
-      return res.status(500).json({ error: 'IPN registration failed: ' + e.message });
-    }
+    // Skip IPN registration - use default
+    const ipnId = 'default';
+    console.log('[TEST PAYMENT] Using default IPN ID:', ipnId);
 
     // Submit order to Pesapal
     const order = {
