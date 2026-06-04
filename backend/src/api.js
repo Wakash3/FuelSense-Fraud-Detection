@@ -55,7 +55,6 @@ async function getDb() {
 async function sendRenewalReminder(stationId, daysLeft, userEmail, planName) {
   console.log(`[EMAIL REMINDER] Station: ${stationId} | Email: ${userEmail} | Plan: ${planName} | Renews in: ${daysLeft} days`);
   
-  // Send email if Resend is configured
   if (resend) {
     try {
       await resend.emails.send({
@@ -70,7 +69,7 @@ async function sendRenewalReminder(stationId, daysLeft, userEmail, planName) {
             </div>
             <div style="padding: 20px; border: 1px solid #e0e0e0;">
               <h2>Subscription Renewal Reminder</h2>
-              <p>Your <strong>${planName}</strong> plan for station ${stationId} will renew in <strong>${daysLeft} days</strong>.</p>
+              <p>Your <strong>${planName}</strong> plan will renew in <strong>${daysLeft} days</strong>.</p>
               <p>To manage your subscription or update payment method, please visit your billing page.</p>
               <div style="text-align: center; margin: 30px 0;">
                 <a href="${process.env.FRONTEND_URL}/?tab=pricing" style="background: #4CAF50; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Manage Subscription</a>
@@ -97,11 +96,12 @@ async function checkUpcomingRenewals() {
   try {
     const client = await getDb();
     const result = await client.query(
-      `SELECT s.id, s.station_id, s.plan_name, s.billing_cycle, s.current_period_end,
-              st.name as station_name, up.email as user_email
+      `SELECT s.id, s.station_id, s.plan_id, s.billing_cycle, s.current_period_end,
+              st.name as station_name, up.email as user_email, p.name as plan_name
        FROM subscriptions s
        JOIN stations st ON st.id = s.station_id
        JOIN user_profiles up ON up.station_id = s.station_id
+       JOIN subscription_plans p ON p.id = s.plan_id
        WHERE s.status = 'active'
          AND s.current_period_end > NOW()
          AND s.current_period_end < NOW() + INTERVAL '7 days'
@@ -113,8 +113,6 @@ async function checkUpcomingRenewals() {
       for (const sub of result.rows) {
         const daysLeft = Math.ceil((new Date(sub.current_period_end) - new Date()) / (1000 * 60 * 60 * 24));
         console.log(`  - Station: ${sub.station_name} (${sub.plan_name}) | Days left: ${daysLeft} | Email: ${sub.user_email}`);
-        
-        // Send reminder email
         await sendRenewalReminder(sub.station_id, daysLeft, sub.user_email, sub.plan_name);
       }
     }
@@ -914,18 +912,18 @@ app.listen(PORT, () => {
 // ── Auto-expire subscriptions cron job (runs every hour) ───────────────────
 setInterval(async () => {
   await checkExpiredSubscriptions();
-}, 60 * 60 * 1000); // Every hour
+}, 60 * 60 * 1000);
 
 // ── Check upcoming renewals and send reminders (runs every 6 hours) ─────────
 setInterval(async () => {
   await checkUpcomingRenewals();
-}, 6 * 60 * 60 * 1000); // Every 6 hours
+}, 6 * 60 * 60 * 1000);
 
 // Run once on startup
 setTimeout(async () => {
   await checkExpiredSubscriptions();
   await checkUpcomingRenewals();
-}, 5000); // Run 5 seconds after startup
+}, 5000);
 
 // ── Ingestion Scheduler ───────────────────────────────────────────────────
 setTimeout(async () => {
@@ -968,12 +966,10 @@ setTimeout(async () => {
 
           console.log('[scheduler] Saved | tank ' + t.tank_number + ' (' + reading.product + ') | innage: ' + reading.innageMm + 'mm | nsv: ' + volumes.nsv_litres + 'L');
 
-          // Run alert checks
           const fillPct = (volumes.nsv_litres / parseFloat(t.capacity_litres)) * 100;
           await checkHighWaterAlert(client, t.id, t.tank_number, reading.waterMm);
           await checkLowStockAlert(client, t.id, t.tank_number, t.fuel_type, fillPct, parseFloat(t.low_stock_threshold_pct));
 
-          // Delivery detection
           const state = tankState[t.id];
           if (!state) {
             tankState[t.id] = { lastInnageMm: reading.innageMm, stableCycles: 0, deliveryId: null, deliveryStatus: 'none' };
@@ -987,7 +983,7 @@ setTimeout(async () => {
                 `INSERT INTO deliveries (id, tank_id, status, offload_started_at) VALUES (gen_random_uuid(), $1, 'in_progress', NOW()) RETURNING id`,
                 [t.id]
               );
-              state.deliveryId     = dRes.rows[0].id;
+              state.deliveryId = dRes.rows[0].id;
               state.deliveryStatus = 'in_progress';
               console.log('[scheduler] DELIVERY STARTED tank ' + t.tank_number + ' rise: +' + delta.toFixed(1) + 'mm');
             }
@@ -999,7 +995,7 @@ setTimeout(async () => {
                 [state.deliveryId]
               );
               state.deliveryStatus = 'awaiting_stabilisation';
-              state.stableCycles   = 0;
+              state.stableCycles = 0;
               console.log('[scheduler] OFFLOAD ENDED delivery ' + state.deliveryId);
             }
           }
