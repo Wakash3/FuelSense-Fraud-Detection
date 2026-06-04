@@ -597,9 +597,9 @@ app.post('/api/payments/initiate', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // Skip IPN registration - use default
-    const ipnId = 'default';
-    console.log('[PAYMENT] Using default IPN ID:', ipnId);
+    // Use registered IPN ID
+    const ipnId = 'ae69c243-c3a9-4717-8932-da50bb3db92b';
+    console.log('[PAYMENT] Using registered IPN ID:', ipnId);
 
     // Submit order to Pesapal
     const order = {
@@ -676,9 +676,9 @@ app.post('/api/payments/test', async (req, res) => {
     );
     const paymentId = payRes.rows[0].id;
 
-    // Skip IPN registration - use default
-    const ipnId = 'default';
-    console.log('[TEST PAYMENT] Using default IPN ID:', ipnId);
+    // Use registered IPN ID
+    const ipnId = 'ae69c243-c3a9-4717-8932-da50bb3db92b';
+    console.log('[TEST PAYMENT] Using registered IPN ID:', ipnId);
 
     // Submit order to Pesapal
     const order = {
