@@ -113,4 +113,77 @@ export default function Stations({ api }) {
                             />
                         </div>
                         <div>
-                            <label style={{ display:
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', color: '#666', marginBottom: '4px' }}>Location</label>
+                            <input
+                                type="text"
+                                value={form.location}
+                                onChange={e => setForm({ ...form, location: e.target.value })}
+                                placeholder="e.g. Westlands, Nairobi"
+                                style={inputStyle}
+                            />
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        <button
+                            onClick={handleSave}
+                            disabled={saving}
+                            style={{ padding: '9px 20px', background: saving ? '#888' : '#27ae60', color: '#fff', border: 'none', borderRadius: '8px', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600' }}
+                        >
+                            {saving ? 'Saving...' : editing ? 'Update Station' : 'Add Station'}
+                        </button>
+                        <button
+                            onClick={() => setShowForm(false)}
+                            style={{ padding: '9px 20px', background: '#f0f0f0', color: '#333', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* List */}
+            {loading ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: '#888' }}>Loading stations...</div>
+            ) : stations.length === 0 ? (
+                <div style={{ background: '#fff', borderRadius: '12px', padding: '60px 24px', textAlign: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+                    <div style={{ fontSize: '48px', marginBottom: '16px' }}>🏪</div>
+                    <div style={{ fontSize: '16px', fontWeight: '500', color: '#1a1a2e', marginBottom: '8px' }}>No stations yet</div>
+                    <div style={{ fontSize: '13px', color: '#888' }}>Add your first station to get started.</div>
+                </div>
+            ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {stations.map(station => (
+                        <div key={station.id} style={{ background: '#fff', borderRadius: '12px', padding: '20px 24px', boxShadow: '0 2px 6px rgba(0,0,0,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <div style={{ fontSize: '15px', fontWeight: '600', color: '#1a1a2e', marginBottom: '4px' }}>
+                                    🏪 {station.name}
+                                </div>
+                                <div style={{ fontSize: '13px', color: '#888' }}>
+                                    {station.location || 'No location set'} &nbsp;·&nbsp;
+                                    <span style={{ color: '#3498db' }}>{station.tank_count || 0} tank{station.tank_count !== '1' ? 's' : ''}</span>
+                                </div>
+                                <div style={{ fontSize: '11px', color: '#bbb', marginTop: '4px' }}>
+                                    ID: {station.id}
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                    onClick={() => openEdit(station)}
+                                    style={{ padding: '7px 14px', background: '#e8f4fd', color: '#1a5276', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}
+                                >
+                                    ✏️ Edit
+                                </button>
+                                <button
+                                    onClick={() => handleDelete(station)}
+                                    style={{ padding: '7px 14px', background: '#fdecea', color: '#e74c3c', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}
+                                >
+                                    🗑 Delete
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
