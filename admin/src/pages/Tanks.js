@@ -126,8 +126,7 @@ export default function Tanks({ api }) {
             formData.append('file', csvFile);
 
             // Posts to your FuelSense main API (api.js), not admin API
-            const mainApi = api.replace('https://fuelsense-fraud-detection-1.onrender.com', 'api').replace(':3002', ':3001');
-            const res = await fetch(`${mainApi}/api/tanks/${savedTankId}/strapping-upload`, {
+            const res = await fetch(`https://fuelsense-fraud-detection-1.onrender.com/api/tanks/${savedTankId}/strapping-upload`, {
                 method: 'POST',
                 body: formData,
             });
