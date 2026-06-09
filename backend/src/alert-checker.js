@@ -36,19 +36,16 @@ async function runAlertCheck() {
     for (const tank of tankRes.rows) {
       const fillPct = parseFloat(tank.fill_pct);
 
-      // Low stock alert
       if (fillPct < 20 && fillPct > 0) {
         console.log('[ALERT-CHECK] Low stock on Tank', tank.tank_number, fillPct + '%');
         await alertLowStock(tank.tank_number, tank.fuel_type, fillPct, tank.nsv_litres);
       }
 
-      // High water alert
       if (parseFloat(tank.water_mm) > 50) {
         console.log('[ALERT-CHECK] High water on Tank', tank.tank_number, tank.water_mm + 'mm');
         await alertHighWater(tank.tank_number, tank.fuel_type, tank.water_mm);
       }
 
-      // Reading gap — last reading older than 10 minutes
       const lastReading = new Date(tank.recorded_at);
       const minutesAgo  = (Date.now() - lastReading.getTime()) / 60000;
       if (minutesAgo > 10) {
@@ -56,31 +53,44 @@ async function runAlertCheck() {
       }
     }
 
-    // 2. Check flagged deliveries with automatic fallback
+    // 2. Check flagged deliveries - FIXED VERSION
     let delivRes;
     try {
-      // Try with delivery_date first
-      delivRes = await db.query(`
-        SELECT d.*, t.tank_number, t.fuel_type
-          FROM deliveries d
-          JOIN tanks t ON t.id = d.tank_id
-         WHERE d.status = 'flagged'
-           AND d.delivery_date > NOW() - INTERVAL '24 hours'
-      `);
-      console.log('[ALERT-CHECK] Using delivery_date column for filtering');
-    } catch (err) {
-      if (err.message.includes('column d.delivery_date does not exist')) {
-        console.log('[ALERT-CHECK] delivery_date column not found, checking all flagged deliveries');
-        // Fallback: check all flagged deliveries without date filter
+      // Try common column names
+      const possibleColumns = ['delivery_date', 'created_on', 'delivery_timestamp', 'event_date'];
+      let queryExecuted = false;
+      
+      for (const col of possibleColumns) {
+        try {
+          delivRes = await db.query(`
+            SELECT d.*, t.tank_number, t.fuel_type
+              FROM deliveries d
+              JOIN tanks t ON t.id = d.tank_id
+             WHERE d.status = 'flagged'
+               AND d.${col} > NOW() - INTERVAL '24 hours'
+          `);
+          console.log(`[ALERT-CHECK] Using ${col} column for filtering`);
+          queryExecuted = true;
+          break;
+        } catch (err) {
+          if (!err.message.includes('column d.')) throw err;
+          // Continue to next column
+        }
+      }
+      
+      if (!queryExecuted) {
+        // Fallback: no date filter
         delivRes = await db.query(`
           SELECT d.*, t.tank_number, t.fuel_type
             FROM deliveries d
             JOIN tanks t ON t.id = d.tank_id
            WHERE d.status = 'flagged'
         `);
-      } else {
-        throw err;
+        console.log('[ALERT-CHECK] No date column found, checking all flagged deliveries');
       }
+    } catch (err) {
+      console.error('[ALERT-CHECK] Error in deliveries query:', err.message);
+      throw err;
     }
 
     for (const delivery of delivRes.rows) {
