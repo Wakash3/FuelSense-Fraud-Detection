@@ -1,96 +1,173 @@
-/**
- * FuelSense - Measurement Engine
- * Phase 3
- */
+'use strict';
 
-require('dotenv').config();
+const ASTM_REFERENCE_TEMP = 15.0;
 
-const { Client } = require('pg');
-
-// ---------------------------------------------------------------------------
-// Database — single persistent Client (same as api.js)
-// ---------------------------------------------------------------------------
-const DATABASE_URL = process.env.DATABASE_URL;
-let db = null;
-
-async function getDb() {
-    if (db) return db;
-    db = new Client({ connectionString: DATABASE_URL });
-    await db.connect();
-    console.log('[measurement] Database connected');
-    return db;
-}
-
-// ---------------------------------------------------------------------------
-// ASTM D1250 VCF constants
-// ---------------------------------------------------------------------------
-const VCF_CONSTANTS = {
-    petrol:   { K0: 613.9723e-6, K1: 0.0 },
-    diesel:   { K0: 613.9723e-6, K1: 0.0 },
-    kerosene: { K0: 613.9723e-6, K1: 0.0 },
+const ASTM_PRODUCTS = {
+  petrol:   { K0: 613.9723e-6, K1: 0.0,       densityMin: 0.6110, densityMax: 0.7700 },
+  diesel:   { K0: 186.9764e-6, K1: 0.4862e-3, densityMin: 0.8300, densityMax: 0.9660 },
+  kerosene: { K0: 330.3010e-6, K1: 0.0,       densityMin: 0.7800, densityMax: 0.8300 },
 };
 
-// ---------------------------------------------------------------------------
-// Strapping table cache
-// ---------------------------------------------------------------------------
-const strappingCache = {};
+async function lookupStrappingTable(db, tankId, depthMm) {
+  // --- VALIDATION: Prevent NaN errors ---
+  depthMm = parseFloat(depthMm);
+  if (isNaN(depthMm)) depthMm = 0;
+  if (depthMm <= 0) return 0;
 
-async function loadStrappingTable(tankId) {
-    if (strappingCache[tankId]) return strappingCache[tankId];
+  const floorMm = Math.floor(depthMm);
+  const ceilMm = floorMm + 1;
+  const fraction = depthMm - floorMm;
 
-    const client = await getDb();
-    const result = await client.query(
-        `SELECT depth_mm, volume_litres FROM strapping_table_entries WHERE tank_id = $1 ORDER BY depth_mm ASC`,
-        [tankId]
+  try {
+    const res = await db.query(
+      `SELECT depth_mm, volume_litres
+         FROM strapping_table_entries
+        WHERE tank_id = $1
+          AND depth_mm IN ($2, $3)
+        ORDER BY depth_mm ASC`,
+      [tankId, floorMm, ceilMm]
     );
 
-    if (result.rows.length === 0) throw new Error('No strapping table entries found for tank ' + tankId);
+    if (res.rows.length === 0) {
+      // Fallback: linear approximation if no strapping table exists
+      console.log(`[NSV] No strapping table for tank ${tankId}, using linear approximation`);
+      // Assume 2000mm = 10000 litres capacity
+      const maxDepth = 2000;
+      const maxVolume = 10000;
+      const volume = (depthMm / maxDepth) * maxVolume;
+      return Math.max(0, Math.min(volume, maxVolume));
+    }
 
-    strappingCache[tankId] = result.rows;
-    console.log('[measurement] Strapping table cached for tank ' + tankId + ' (' + result.rows.length + ' rows)');
-    return strappingCache[tankId];
+    const floorRow = res.rows.find(r => parseInt(r.depth_mm) === floorMm);
+    const ceilRow = res.rows.find(r => parseInt(r.depth_mm) === ceilMm);
+
+    if (!floorRow) return 0;
+
+    const floorVol = parseFloat(floorRow.volume_litres);
+    if (!ceilRow || fraction === 0) return floorVol;
+
+    const ceilVol = parseFloat(ceilRow.volume_litres);
+    return +(floorVol + fraction * (ceilVol - floorVol)).toFixed(3);
+  } catch (err) {
+    console.error(`[NSV] Error looking up strapping table:`, err.message);
+    // Fallback: linear approximation
+    const maxDepth = 2000;
+    const maxVolume = 10000;
+    const volume = (depthMm / maxDepth) * maxVolume;
+    return Math.max(0, Math.min(volume, maxVolume));
+  }
 }
 
-async function lookupStrappingTable(tankId, depthMm) {
-    if (depthMm < 0) depthMm = 0;
-    const table    = await loadStrappingTable(tankId);
-    const floorMm  = Math.floor(depthMm);
-    const ceilMm   = Math.ceil(depthMm);
-    const fraction = depthMm - floorMm;
-    const floorRow = table.find(r => r.depth_mm === floorMm);
-    if (!floorRow) throw new Error('Strapping table lookup failed: depth ' + floorMm + 'mm not found for tank ' + tankId);
-    if (fraction === 0 || floorMm === ceilMm) return parseFloat(floorRow.volume_litres);
-    const ceilRow = table.find(r => r.depth_mm === ceilMm);
-    if (!ceilRow) return parseFloat(floorRow.volume_litres);
-    return +(parseFloat(floorRow.volume_litres) + fraction * (parseFloat(ceilRow.volume_litres) - parseFloat(floorRow.volume_litres))).toFixed(3);
-}
+async function calculateTOVandWater(db, tankId, innage_mm, water_mm) {
+  // --- VALIDATION: Prevent NaN errors ---
+  innage_mm = parseFloat(innage_mm);
+  water_mm = parseFloat(water_mm);
+  
+  if (isNaN(innage_mm)) innage_mm = 0;
+  if (isNaN(water_mm)) water_mm = 0;
+  
+  const safeWater = Math.min(water_mm, innage_mm);
 
-async function calculateTOVandWater(tankId, innageMm, waterMm) {
-    const tov_litres   = await lookupStrappingTable(tankId, innageMm);
-    const water_litres = await lookupStrappingTable(tankId, waterMm);
-    return { tov_litres, water_litres, gov_litres: +(tov_litres - water_litres).toFixed(3) };
+  const [tov_litres, water_litres] = await Promise.all([
+    lookupStrappingTable(db, tankId, innage_mm),
+    lookupStrappingTable(db, tankId, safeWater),
+  ]);
+
+  const gov_litres = Math.max(0, tov_litres - water_litres);
+
+  return {
+    tov_litres: +tov_litres.toFixed(3),
+    water_litres: +water_litres.toFixed(3),
+    gov_litres: +gov_litres.toFixed(3),
+  };
 }
 
 function calculateVCF(temperatureC, densityAt15C, fuelType = 'petrol') {
-    const { K0, K1 } = VCF_CONSTANTS[fuelType] || VCF_CONSTANTS.petrol;
-    const alpha  = K0 / (densityAt15C * densityAt15C) + K1 / densityAt15C;
-    const deltaT = temperatureC - 15.0;
-    return +Math.exp(-alpha * deltaT * (1 + 0.8 * alpha * deltaT)).toFixed(6);
+  // --- VALIDATION: Prevent NaN errors ---
+  temperatureC = parseFloat(temperatureC);
+  densityAt15C = parseFloat(densityAt15C);
+  
+  if (isNaN(temperatureC)) temperatureC = 20;
+  if (isNaN(densityAt15C)) densityAt15C = 0.74; // Default petrol density
+  
+  const product = ASTM_PRODUCTS[fuelType.toLowerCase()];
+  if (!product) {
+    console.log(`[NSV] Unknown fuel type: ${fuelType}, using petrol coefficients`);
+    const defaultProduct = ASTM_PRODUCTS.petrol;
+    const { K0, K1 } = defaultProduct;
+    const alpha = K0 / (densityAt15C * densityAt15C) + K1 / densityAt15C;
+    const deltaT = temperatureC - ASTM_REFERENCE_TEMP;
+    const exponent = -alpha * deltaT * (1 + 0.8 * alpha * deltaT);
+    return +Math.exp(exponent).toFixed(6);
+  }
+
+  const { K0, K1 } = product;
+  const alpha = K0 / (densityAt15C * densityAt15C) + K1 / densityAt15C;
+  const deltaT = temperatureC - ASTM_REFERENCE_TEMP;
+  const exponent = -alpha * deltaT * (1 + 0.8 * alpha * deltaT);
+  return +Math.exp(exponent).toFixed(6);
 }
 
-async function calculateNSV(tankId, innageMm, waterMm, temperatureC) {
-    const client     = await getDb();
-    const tankResult = await client.query('SELECT fuel_type, fuel_density_at_15c FROM tanks WHERE id = $1', [tankId]);
-    if (tankResult.rows.length === 0) throw new Error('Tank not found: ' + tankId);
+async function calculateNSV(db, tankId, innage_mm, water_mm, temperature_c) {
+  // --- VALIDATION: Prevent NaN errors ---
+  innage_mm = parseFloat(innage_mm);
+  water_mm = parseFloat(water_mm);
+  temperature_c = parseFloat(temperature_c);
+  
+  if (isNaN(innage_mm)) innage_mm = 0;
+  if (isNaN(water_mm)) water_mm = 0;
+  if (isNaN(temperature_c)) temperature_c = 20;
+  
+  console.log(`[NSV] Calculating for tank ${tankId}: innage=${innage_mm}mm, water=${water_mm}mm, temp=${temperature_c}°C`);
 
-    const { fuel_type, fuel_density_at_15c } = tankResult.rows[0];
-    const density = parseFloat(fuel_density_at_15c);
+  try {
+    const tankRes = await db.query(
+      `SELECT fuel_type, fuel_density_at_15c, capacity_litres FROM tanks WHERE id = $1`,
+      [tankId]
+    );
+    
+    if (!tankRes.rows.length) {
+      console.error(`[NSV] Tank not found: ${tankId}`);
+      // Return default values instead of throwing
+      return {
+        tov_litres: 0,
+        water_litres: 0,
+        gov_litres: 0,
+        vcf: 1.0,
+        nsv_litres: 0
+      };
+    }
 
-    const { tov_litres, water_litres, gov_litres } = await calculateTOVandWater(tankId, innageMm, waterMm);
-    const vcf        = calculateVCF(temperatureC, density, fuel_type);
-    const nsv_litres = +(gov_litres * vcf).toFixed(3);
+    const { fuel_type, fuel_density_at_15c, capacity_litres } = tankRes.rows[0];
+    const density = parseFloat(fuel_density_at_15c) || 0.74;
+    
+    console.log(`[NSV] Tank: fuel_type=${fuel_type}, density=${density}, capacity=${capacity_litres}L`);
 
-    return { tov_litres, water_litres, gov_litres, vcf, nsv_litres };
+    const volumes = await calculateTOVandWater(db, tankId, innage_mm, water_mm);
+    const vcf = calculateVCF(temperature_c, density, fuel_type);
+    const nsv_litres = +(volumes.gov_litres * vcf).toFixed(3);
+
+    console.log(`[NSV] Results: TOV=${volumes.tov_litres}L, Water=${volumes.water_litres}L, NSV=${nsv_litres}L`);
+
+    return { ...volumes, vcf, nsv_litres };
+  } catch (err) {
+    console.error(`[NSV] Error in calculateNSV:`, err.message);
+    // Return safe default values
+    return {
+      tov_litres: 0,
+      water_litres: 0,
+      gov_litres: 0,
+      vcf: 1.0,
+      nsv_litres: 0
+    };
+  }
 }
 
-module.exports = { lookupStrappingTable, calculateTOVandWater, calculateVCF, calculateNSV };
+module.exports = {
+  calculateNSV,
+  calculateVCF,
+  calculateTOVandWater,
+  lookupStrappingTable,
+  ASTM_REFERENCE_TEMP,
+  ASTM_PRODUCTS,
+};

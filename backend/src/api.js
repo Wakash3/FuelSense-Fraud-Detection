@@ -1,15 +1,15 @@
 require('dotenv').config();
 'use strict';
 
-const express = require('express');
-const cors = require('cors');
+const express    = require('express');
+const cors       = require('cors');
 const { Client } = require('pg');
 const { getAlerts, acknowledgeAlert, checkHighWaterAlert, checkLowStockAlert } = require('./alerts');
 const { openShift, closeShift, getAllShifts, getShifts } = require('./shift-manager');
 const { Resend } = require('resend');
 
-const app = express();
-const PORT = process.env.API_PORT || 3001;
+const app          = express();
+const PORT         = process.env.API_PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL;
 
 app.use(cors());
@@ -58,9 +58,9 @@ app.get('/api/debug-pesapal', (req, res) => {
 // ── POST /api/alerts/test ────────────────────────────────────────────────────
 app.post('/api/alerts/test', async (req, res) => {
   const { sendTestAlert } = require('./email-alerts');
-
+  
   const success = await sendTestAlert();
-
+  
   if (success) {
     res.json({ message: 'Test alert sent successfully', email: process.env.ALERT_EMAIL || 'bernicewakarindi@gmail.com' });
   } else {
@@ -81,7 +81,7 @@ async function getDb() {
 // ── Send renewal reminder email ─────────────────────────────────────────────
 async function sendRenewalReminder(stationId, daysLeft, userEmail, planName) {
   console.log(`[EMAIL REMINDER] Station: ${stationId} | Email: ${userEmail} | Plan: ${planName} | Renews in: ${daysLeft} days`);
-
+  
   if (resend) {
     try {
       await resend.emails.send({
@@ -134,7 +134,7 @@ async function checkUpcomingRenewals() {
          AND s.current_period_end < NOW() + INTERVAL '7 days'
        ORDER BY s.current_period_end ASC`
     );
-
+    
     if (result.rows.length) {
       console.log(`[CRON] Found ${result.rows.length} subscription(s) renewing soon:`);
       for (const sub of result.rows) {
@@ -159,7 +159,7 @@ async function checkExpiredSubscriptions() {
          AND current_period_end < NOW()
        RETURNING station_id`
     );
-
+    
     if (result.rows.length) {
       console.log(`[CRON] Expired ${result.rows.length} subscription(s):`);
       result.rows.forEach(row => {
@@ -214,12 +214,12 @@ app.get('/api/tanks', async (req, res) => {
         `SELECT role, station_id FROM user_profiles WHERE supabase_uid = $1`,
         [supabaseUid]
       );
-
+      
       if (userRes.rows.length) {
         const role = userRes.rows[0].role;
         const accessLevel = getRoleAccessLevel(role);
         const assignedStation = userRes.rows[0].station_id;
-
+        
         // Owner, Headquarters, Supervisor, Compliance Officer see all stations
         if (accessLevel >= 65) {
           // No station filter - see everything
@@ -241,148 +241,13 @@ app.get('/api/tanks', async (req, res) => {
   }
 });
 
-// ── POST /api/tanks ───────────────────────────────────────────────────────
-app.post('/api/tanks', async (req, res) => {
-  const { station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct } = req.body;
-
-  if (!station_id || !tank_number || !fuel_type || !capacity_litres) {
-    return res.status(400).json({ error: 'Missing required fields: station_id, tank_number, fuel_type, capacity_litres' });
-  }
-
-  try {
-    const client = await getDb();
-
-    // Check station exists
-    const station = await client.query(
-      'SELECT id FROM stations WHERE id = $1', [station_id]
-    );
-    if (!station.rows.length) {
-      return res.status(404).json({ error: 'Station not found' });
-    }
-
-    // Check tank number is unique for this station
-    const existing = await client.query(
-      'SELECT id FROM tanks WHERE station_id = $1 AND tank_number = $2',
-      [station_id, tank_number]
-    );
-    if (existing.rows.length) {
-      return res.status(400).json({ error: 'Tank number already exists for this station' });
-    }
-
-    const result = await client.query(
-      `INSERT INTO tanks (id, station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [station_id, tank_number, fuel_type, capacity_litres,
-        fuel_density_at_15c || 0.835,
-        low_stock_threshold_pct || 20]
-    );
-
-    console.log('[API] Tank created:', result.rows[0].id);
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    console.error('[API] POST /api/tanks error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── POST /api/tanks/:tankId/strapping-upload ──────────────────────────────
-const multer = require('multer');
-const csvParser = require('csv-parser');
-const fs = require('fs');
-const upload = multer({ dest: 'uploads/' });
-
-app.post('/api/tanks/:tankId/strapping-upload', upload.single('file'), async (req, res) => {
-  const { tankId } = req.params;
-  const rows = [];
-
-  try {
-    const client = await getDb();
-
-    // Verify tank exists
-    const tank = await client.query(
-      'SELECT id FROM tanks WHERE id = $1', [tankId]
-    );
-    if (!tank.rows.length) {
-      return res.status(404).json({ error: 'Tank not found' });
-    }
-
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    // Read and parse the CSV file
-    await new Promise((resolve, reject) => {
-      fs.createReadStream(req.file.path)
-        .pipe(csvParser())
-        .on('data', (row) => {
-          // Support both column name formats
-          const depth = parseInt(row.depth_mm || row.Depth_mm || row.depth);
-          const volume = parseFloat(row.volume_litres || row.Volume_litres || row.litres);
-
-          if (!isNaN(depth) && !isNaN(volume)) {
-            rows.push({ depth_mm: depth, volume_litres: volume });
-          }
-        })
-        .on('end', resolve)
-        .on('error', reject);
-    });
-
-    if (rows.length === 0) {
-      return res.status(400).json({
-        error: 'No valid rows found. CSV must have columns: depth_mm, volume_litres'
-      });
-    }
-
-    // Delete existing strapping data for this tank
-    await client.query(
-      'DELETE FROM strapping_table WHERE tank_id = $1', [tankId]
-    );
-
-    // Insert all rows in one transaction
-    await client.query('BEGIN');
-    try {
-      for (const row of rows) {
-        await client.query(
-          `INSERT INTO strapping_table (id, tank_id, depth_mm, volume_litres)
-           VALUES (gen_random_uuid(), $1, $2, $3)`,
-          [tankId, row.depth_mm, row.volume_litres]
-        );
-      }
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    }
-
-    // Clean up temp file
-    fs.unlinkSync(req.file.path);
-
-    console.log(`[API] Strapping table uploaded for tank ${tankId}: ${rows.length} rows`);
-    res.json({
-      ok: true,
-      tank_id: tankId,
-      rows_inserted: rows.length,
-      message: `Successfully uploaded ${rows.length} calibration rows`
-    });
-
-  } catch (err) {
-    // Clean up temp file if it exists
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    console.error('[API] strapping upload error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ── GET /api/stations ─────────────────────────────────────────────────────
 app.get('/api/stations', async (req, res) => {
   try {
-    const client = await getDb();
+    const client      = await getDb();
     const supabaseUid = req.query.uid;
 
-    let query = `SELECT id, name, location FROM stations ORDER BY name`;
+    let query  = `SELECT id, name, location FROM stations ORDER BY name`;
     let params = [];
 
     if (supabaseUid) {
@@ -390,12 +255,12 @@ app.get('/api/stations', async (req, res) => {
         `SELECT role, station_id FROM user_profiles WHERE supabase_uid = $1`,
         [supabaseUid]
       );
-
+      
       if (userRes.rows.length) {
         const role = userRes.rows[0].role;
         const accessLevel = getRoleAccessLevel(role);
         const assignedStation = userRes.rows[0].station_id;
-
+        
         // Owner, Headquarters, Supervisor, Compliance Officer see all stations
         if (accessLevel >= 65) {
           // No station filter - see all stations
@@ -418,7 +283,7 @@ app.get('/api/stations', async (req, res) => {
 // ── GET /api/user-profile ─────────────────────────────────────────────────
 app.get('/api/user-profile', async (req, res) => {
   try {
-    const client = await getDb();
+    const client      = await getDb();
     const supabaseUid = req.query.uid;
 
     if (!supabaseUid) return res.status(400).json({ error: 'uid required' });
@@ -529,7 +394,7 @@ app.post('/api/deliveries', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields: tank_id, supplier_name, bol_number, bol_nsv_litres' });
   }
   try {
-    const client = await getDb();
+    const client     = await getDb();
     const readingRes = await client.query(
       `SELECT id, nsv_litres FROM atg_readings WHERE tank_id = $1 ORDER BY recorded_at DESC LIMIT 1`,
       [tank_id]
@@ -585,24 +450,24 @@ app.post('/api/reconciliation/pump-sales', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields: tank_id, recon_date, pump_sales_litres' });
   }
   try {
-    const client = await getDb();
-    const openRes = await client.query(`SELECT nsv_litres FROM atg_readings WHERE tank_id = $1 AND recorded_at::date = $2::date ORDER BY recorded_at ASC  LIMIT 1`, [tank_id, recon_date]);
+    const client   = await getDb();
+    const openRes  = await client.query(`SELECT nsv_litres FROM atg_readings WHERE tank_id = $1 AND recorded_at::date = $2::date ORDER BY recorded_at ASC  LIMIT 1`, [tank_id, recon_date]);
     const closeRes = await client.query(`SELECT nsv_litres FROM atg_readings WHERE tank_id = $1 AND recorded_at::date = $2::date ORDER BY recorded_at DESC LIMIT 1`, [tank_id, recon_date]);
 
     if (!openRes.rows.length || !closeRes.rows.length) {
       return res.status(400).json({ error: 'No readings found for this tank on this date' });
     }
 
-    const openingNSV = parseFloat(openRes.rows[0].nsv_litres);
-    const closingNSV = parseFloat(closeRes.rows[0].nsv_litres);
-    const delivRes = await client.query(
+    const openingNSV         = parseFloat(openRes.rows[0].nsv_litres);
+    const closingNSV         = parseFloat(closeRes.rows[0].nsv_litres);
+    const delivRes           = await client.query(
       `SELECT COALESCE(SUM(received_nsv_litres), 0) AS total FROM deliveries WHERE tank_id = $1 AND status IN ('confirmed','flagged') AND stabilisation_at::date = $2::date`,
       [tank_id, recon_date]
     );
-    const deliveriesNSV = parseFloat(delivRes.rows[0].total) || 0;
-    const sales = parseFloat(pump_sales_litres);
+    const deliveriesNSV      = parseFloat(delivRes.rows[0].total) || 0;
+    const sales              = parseFloat(pump_sales_litres);
     const theoreticalClosing = openingNSV + deliveriesNSV - sales;
-    const varianceLitres = closingNSV - theoreticalClosing;
+    const varianceLitres     = closingNSV - theoreticalClosing;
 
     await client.query(
       `INSERT INTO daily_reconciliation (tank_id, recon_date, opening_nsv, closing_nsv, deliveries_nsv, pump_sales_litres, theoretical_closing, variance_litres)
@@ -626,7 +491,7 @@ app.get('/api/alerts', async (req, res) => {
   try {
     const client = await getDb();
     const status = req.query.status || null;
-    const limit = parseInt(req.query.limit) || 50;
+    const limit  = parseInt(req.query.limit) || 50;
     const alerts = await getAlerts(client, { status, limit });
     res.json(alerts);
   } catch (err) {
@@ -785,10 +650,10 @@ app.post('/api/audit-log', async (req, res) => {
 // ── GET /api/audit-log ──────────────────────────────────────────────────────
 app.get('/api/audit-log', async (req, res) => {
   try {
-    const client = await getDb();
+    const client    = await getDb();
     const stationId = req.query.station_id;
-    const limit = parseInt(req.query.limit || '50');
-    let query = `SELECT id, user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value, ip_address, created_at FROM audit_log`;
+    const limit     = parseInt(req.query.limit || '50');
+    let query  = `SELECT id, user_email, user_role, action, entity_type, entity_id, station_id, old_value, new_value, ip_address, created_at FROM audit_log`;
     const params = [];
     if (stationId) {
       params.push(stationId);
@@ -819,8 +684,8 @@ app.get('/api/plans', async (req, res) => {
 // ── GET /api/subscription ───────────────────────────────────────────────────
 app.get('/api/subscription', async (req, res) => {
   try {
-    const client = await getDb();
-    const stationId = req.query.station_id;
+    const client     = await getDb();
+    const stationId  = req.query.station_id;
     if (!stationId) return res.status(400).json({ error: 'station_id required' });
 
     const result = await client.query(
@@ -886,18 +751,18 @@ app.post('/api/payments/initiate', async (req, res) => {
 
     // Submit order to Pesapal
     const order = {
-      id: paymentId,
-      currency: 'KES',
-      amount: parseFloat(amount),
-      description: isTest ? 'FuelSense Test Payment' : `FuelSense ${plan.name} - ${billing_cycle} subscription`,
-      callback_url: process.env.FRONTEND_URL + '/payment-success',
-      notification_id: ipnId,
+      id:                   paymentId,
+      currency:             'KES',
+      amount:               parseFloat(amount),
+      description:          isTest ? 'FuelSense Test Payment' : `FuelSense ${plan.name} - ${billing_cycle} subscription`,
+      callback_url:         process.env.FRONTEND_URL + '/payment-success',
+      notification_id:      ipnId,
       billing_address: {
-        email_address: user_email,
-        phone_number: phone || '',
-        country_code: 'KE',
-        first_name: user_name?.split(' ')[0] || 'Customer',
-        last_name: user_name?.split(' ')[1] || '',
+        email_address:  user_email,
+        phone_number:   phone || '',
+        country_code:   'KE',
+        first_name:     user_name?.split(' ')[0] || 'Customer',
+        last_name:      user_name?.split(' ')[1] || '',
       },
     };
 
@@ -910,12 +775,12 @@ app.post('/api/payments/initiate', async (req, res) => {
     );
 
     res.json({
-      payment_id: paymentId,
+      payment_id:   paymentId,
       redirect_url: pesapalRes.redirect_url,
       amount,
-      plan_name: plan.name,
+      plan_name:    plan.name,
       billing_cycle,
-      is_test: isTest,
+      is_test:      isTest,
     });
 
   } catch (err) {
@@ -965,18 +830,18 @@ app.post('/api/payments/test', async (req, res) => {
 
     // Submit order to Pesapal
     const order = {
-      id: paymentId,
-      currency: 'KES',
-      amount: parseFloat(amount),
-      description: `FuelSense Test Payment - KES ${amount}`,
-      callback_url: process.env.FRONTEND_URL + '/payment-success',
-      notification_id: ipnId,
+      id:                   paymentId,
+      currency:             'KES',
+      amount:               parseFloat(amount),
+      description:          `FuelSense Test Payment - KES ${amount}`,
+      callback_url:         process.env.FRONTEND_URL + '/payment-success',
+      notification_id:      ipnId,
       billing_address: {
-        email_address: user_email,
-        phone_number: phone || '',
-        country_code: 'KE',
-        first_name: user_name?.split(' ')[0] || 'Customer',
-        last_name: user_name?.split(' ')[1] || '',
+        email_address:  user_email,
+        phone_number:   phone || '',
+        country_code:   'KE',
+        first_name:     user_name?.split(' ')[0] || 'Customer',
+        last_name:      user_name?.split(' ')[1] || '',
       },
     };
 
@@ -988,7 +853,7 @@ app.post('/api/payments/test', async (req, res) => {
     );
 
     res.json({
-      payment_id: paymentId,
+      payment_id:   paymentId,
       redirect_url: pesapalRes.redirect_url,
       amount,
     });
@@ -1004,7 +869,7 @@ app.get('/api/payments/callback', async (req, res) => {
   const { OrderTrackingId, OrderMerchantReference } = req.query;
 
   try {
-    const client = await getDb();
+    const client  = await getDb();
     const pesapal = require('./pesapal');
 
     const status = await pesapal.getTransactionStatus(OrderTrackingId);
@@ -1031,8 +896,8 @@ app.get('/api/payments/callback', async (req, res) => {
 
         if (plan) {
           // Calculate period
-          const now = new Date();
-          const end = new Date(now);
+          const now   = new Date();
+          const end   = new Date(now);
           if (payment.billing_cycle === 'annual') {
             end.setFullYear(end.getFullYear() + 1);
           } else {
@@ -1070,7 +935,7 @@ app.get('/api/payments/callback', async (req, res) => {
 // ── GET /api/payments/history ───────────────────────────────────────────────
 app.get('/api/payments/history', async (req, res) => {
   try {
-    const client = await getDb();
+    const client    = await getDb();
     const stationId = req.query.station_id;
     if (!stationId) return res.status(400).json({ error: 'station_id required' });
 
@@ -1079,231 +944,6 @@ app.get('/api/payments/history', async (req, res) => {
       [stationId]
     );
     res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── ADMIN: GET /api/admin/stations ────────────────────────────────────────
-app.get('/api/admin/stations', async (req, res) => {
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `SELECT s.*, COUNT(t.id) AS tank_count
-         FROM stations s
-         LEFT JOIN tanks t ON t.station_id = s.id
-         GROUP BY s.id
-         ORDER BY s.name`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/admin/stations', async (req, res) => {
-  const { name, location } = req.body;
-  if (!name) return res.status(400).json({ error: 'name is required' });
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `INSERT INTO stations (name, location) VALUES ($1, $2) RETURNING *`,
-      [name, location || null]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.put('/api/admin/stations/:id', async (req, res) => {
-  const { name, location } = req.body;
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `UPDATE stations SET name = $1, location = $2 WHERE id = $3 RETURNING *`,
-      [name, location, req.params.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Station not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/admin/stations/:id', async (req, res) => {
-  try {
-    const client = await getDb();
-    await client.query('DELETE FROM stations WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/admin/tanks', async (req, res) => {
-  try {
-    const client = await getDb();
-    const stationId = req.query.station_id || null;
-    let query = `SELECT t.*, s.name AS station_name FROM tanks t JOIN stations s ON s.id = t.station_id`;
-    const params = [];
-    if (stationId) {
-      params.push(stationId);
-      query += ` WHERE t.station_id = $1`;
-    }
-    query += ` ORDER BY s.name, t.tank_number`;
-    const result = await client.query(query, params);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/admin/tanks', async (req, res) => {
-  const { station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct } = req.body;
-  if (!station_id || !tank_number || !fuel_type || !capacity_litres) {
-    return res.status(400).json({ error: 'station_id, tank_number, fuel_type, capacity_litres are required' });
-  }
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `INSERT INTO tanks (station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [station_id, tank_number, fuel_type, capacity_litres, fuel_density_at_15c || 0.835, low_stock_threshold_pct || 20.00]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.put('/api/admin/tanks/:id', async (req, res) => {
-  const { tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct } = req.body;
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `UPDATE tanks SET tank_number=$1, fuel_type=$2, capacity_litres=$3, fuel_density_at_15c=$4, low_stock_threshold_pct=$5 WHERE id=$6 RETURNING *`,
-      [tank_number, fuel_type, capacity_litres, fuel_density_at_15c, low_stock_threshold_pct, req.params.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Tank not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/admin/tanks/:id', async (req, res) => {
-  try {
-    const client = await getDb();
-    await client.query('DELETE FROM tanks WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/admin/users', async (req, res) => {
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `SELECT u.*, s.name AS station_name FROM user_profiles u LEFT JOIN stations s ON s.id = u.station_id ORDER BY u.full_name`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/admin/users', async (req, res) => {
-  const { supabase_uid, email, full_name, role, station_id } = req.body;
-  if (!supabase_uid || !email || !role) {
-    return res.status(400).json({ error: 'supabase_uid, email, role are required' });
-  }
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `INSERT INTO user_profiles (supabase_uid, email, full_name, role, station_id)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (supabase_uid) DO UPDATE SET email=EXCLUDED.email, full_name=EXCLUDED.full_name, role=EXCLUDED.role, station_id=EXCLUDED.station_id
-       RETURNING *`,
-      [supabase_uid, email, full_name || null, role, station_id || null]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.put('/api/admin/users/:id', async (req, res) => {
-  const { full_name, role, station_id } = req.body;
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `UPDATE user_profiles SET full_name=$1, role=$2, station_id=$3 WHERE id=$4 RETURNING *`,
-      [full_name, role, station_id || null, req.params.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/admin/users/:id', async (req, res) => {
-  try {
-    const client = await getDb();
-    await client.query('DELETE FROM user_profiles WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/admin/suppliers', async (req, res) => {
-  try {
-    const client = await getDb();
-    const result = await client.query(`SELECT * FROM suppliers ORDER BY name`);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/admin/suppliers', async (req, res) => {
-  const { name, contact_name, phone, email, address } = req.body;
-  if (!name) return res.status(400).json({ error: 'name is required' });
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `INSERT INTO suppliers (name, contact_name, phone, email, address) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [name, contact_name || null, phone || null, email || null, address || null]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.put('/api/admin/suppliers/:id', async (req, res) => {
-  const { name, contact_name, phone, email, address, is_active } = req.body;
-  try {
-    const client = await getDb();
-    const result = await client.query(
-      `UPDATE suppliers SET name=$1, contact_name=$2, phone=$3, email=$4, address=$5, is_active=$6 WHERE id=$7 RETURNING *`,
-      [name, contact_name, phone, email, address, is_active, req.params.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Supplier not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/admin/suppliers/:id', async (req, res) => {
-  try {
-    const client = await getDb();
-    await client.query('DELETE FROM suppliers WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1338,12 +978,13 @@ setTimeout(async () => {
 // ── Ingestion Scheduler ───────────────────────────────────────────────────
 setTimeout(async () => {
   try {
-    const { getInventory } = require('../atg-client');
-    const { calculateNSV } = require('../measurement-engine');
+    const { getInventory } = require('./atg-client');
+    const { calculateNSV } = require('./measurement-engine');
+
 
     const tankState = {};
     const DELIVERY_RISE_THRESHOLD = 50;
-    const STABLE_CYCLES_REQUIRED = 10;
+    const STABLE_CYCLES_REQUIRED  = 10;
 
     async function pollCycle() {
       console.log('[scheduler] Poll cycle started at ' + new Date().toISOString());
