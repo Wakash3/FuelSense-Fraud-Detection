@@ -8,6 +8,8 @@ import Suppliers from './pages/Suppliers';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
+/* Nothing */
+
 export { API };
 
 const navItems = [
