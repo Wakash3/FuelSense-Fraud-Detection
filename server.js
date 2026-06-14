@@ -2,6 +2,8 @@
 const { exec } = require('child_process');
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -24,6 +26,7 @@ app.use(express.json());
 console.log('[SERVER] Starting FuelSense Unified Server...');
 console.log('[SERVER] Node version:', process.version);
 console.log('[SERVER] Environment:', process.env.NODE_ENV || 'development');
+console.log('[SERVER] Current directory:', __dirname);
 
 // ============================================
 // PART 1: ATG SIMULATOR (generates tank readings)
@@ -58,55 +61,98 @@ startSimulator();
 // ============================================
 // PART 2: FUELSENSE API (serves frontend requests)
 // ============================================
-try {
-    // Import your existing API
-    const api = require('./backend/src/api');
+
+// Helper function to check if file exists
+function fileExists(filePath) {
+    try {
+        return fs.existsSync(path.join(__dirname, filePath));
+    } catch (err) {
+        return false;
+    }
+}
+
+// Try multiple possible paths for api.js
+const possiblePaths = [
+    './backend/src/api.js',
+    './src/api.js',
+    './api.js'
+];
+
+let apiLoaded = false;
+
+for (const apiPath of possiblePaths) {
+    const fullPath = path.join(__dirname, apiPath);
+    console.log(`[API] Checking path: ${fullPath}`);
     
-    // Mount ALL API routes under /api
-    app.use('/api', api);
+    if (fileExists(apiPath)) {
+        console.log(`[API] Found API at: ${apiPath}`);
+        try {
+            const api = require(apiPath);
+            app.use('/api', api);
+            console.log(`[API] ✅ FuelSense API routes mounted successfully from ${apiPath}`);
+            apiLoaded = true;
+            break;
+        } catch (err) {
+            console.error(`[API] ❌ Failed to load API from ${apiPath}:`, err.message);
+        }
+    } else {
+        console.log(`[API] File not found at: ${apiPath}`);
+    }
+}
+
+if (!apiLoaded) {
+    console.error('[API] ⚠️ Could not load API from any path. Running in FALLBACK mode.');
     
-    console.log('[API] FuelSense API routes mounted successfully');
-    console.log('[API] Available endpoints:');
-    console.log('  - GET  /api/health');
-    console.log('  - GET  /api/user-profile');
-    console.log('  - GET  /api/stations');
-    console.log('  - GET  /api/audit-log');
-    console.log('  - GET  /api/tanks');
-    console.log('  - GET  /api/deliveries');
-    console.log('  - POST /api/deliveries');
-    console.log('  - GET  /api/alerts');
-    console.log('  - GET  /api/shifts');
-    console.log('  - POST /api/shifts/open');
-    console.log('  - POST /api/shifts/:id/close');
-    console.log('  - GET  /api/reconciliation');
-    console.log('  - GET  /api/pump-vs-dip');
-    console.log('  - POST /api/audit-log');
-    console.log('  - GET  /api/plans');
-    console.log('  - GET  /api/subscription');
-    console.log('  - POST /api/payments/initiate');
-    console.log('  - POST /api/payments/test');
-    console.log('  - GET  /api/payments/callback');
-    console.log('  - GET  /api/payments/history');
-    console.log('  - GET  /api/cors-test');
-    console.log('  - GET  /api/debug-pesapal');
-} catch (err) {
-    console.error('[API] Failed to load API routes:', err.message);
-    
-    // Fallback simple API endpoints if main API fails to load
+    // Create comprehensive fallback API endpoints
     app.get('/api/health', (req, res) => {
         res.json({ status: 'ok', timestamp: new Date().toISOString(), message: 'API running in fallback mode' });
     });
+    
     app.get('/api/user-profile', (req, res) => {
-        res.json({ role: 'attendant', station_id: null, message: 'Fallback API - full API not loaded' });
+        const { uid } = req.query;
+        res.json({ role: 'attendant', station_id: null, uid: uid, message: 'Fallback API - full API not loaded' });
     });
+    
     app.get('/api/stations', (req, res) => {
         res.json([]);
     });
+    
     app.get('/api/audit-log', (req, res) => {
         res.json([]);
     });
+    
+    app.post('/api/audit-log', (req, res) => {
+        console.log('[API] Fallback audit-log POST:', req.body);
+        res.json({ ok: true, message: 'Fallback mode - audit log not saved' });
+    });
+    
+    app.get('/api/tanks', (req, res) => {
+        res.json([]);
+    });
+    
+    app.get('/api/deliveries', (req, res) => {
+        res.json([]);
+    });
+    
+    app.get('/api/alerts', (req, res) => {
+        res.json([]);
+    });
+    
+    app.get('/api/shifts', (req, res) => {
+        res.json([]);
+    });
+    
+    app.get('/api/reconciliation', (req, res) => {
+        res.json([]);
+    });
+    
     app.get('/api/cors-test', (req, res) => {
-        res.json({ cors_working: true, message: 'CORS is working (fallback mode)' });
+        res.json({ 
+            cors_working: true, 
+            message: 'CORS is working (fallback mode)',
+            api_loaded: false,
+            paths_checked: possiblePaths
+        });
     });
 }
 
@@ -121,8 +167,8 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         simulator: simulator ? 'running' : 'stopped',
         restarts: restartCount,
-        api_mounted: true,
-        api_endpoint: '/api/health'
+        api_loaded: apiLoaded,
+        uptime: process.uptime()
     });
 });
 
@@ -130,15 +176,30 @@ app.get('/ping', (req, res) => {
     res.send('pong');
 });
 
+// Simple status endpoint
+app.get('/status', (req, res) => {
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        api_loaded: apiLoaded,
+        simulator_running: simulator !== null
+    });
+});
+
 // ============================================
 // START SERVER
 // ============================================
 app.listen(PORT, () => {
+    console.log(`[SERVER] ========================================`);
     console.log(`[SERVER] FuelSense Unified Server running on port ${PORT}`);
+    console.log(`[SERVER] ========================================`);
     console.log(`[SERVER] Health check: https://fuelsense-fraud-detection.onrender.com/health`);
     console.log(`[SERVER] API base: https://fuelsense-fraud-detection.onrender.com/api`);
     console.log(`[SERVER] API health: https://fuelsense-fraud-detection.onrender.com/api/health`);
     console.log(`[SERVER] Simulator status: ${simulator ? 'running' : 'starting'}`);
+    console.log(`[SERVER] API loaded: ${apiLoaded ? 'YES ✅' : 'NO ⚠️'}`);
+    console.log(`[SERVER] ========================================`);
 });
 
 // Graceful shutdown
