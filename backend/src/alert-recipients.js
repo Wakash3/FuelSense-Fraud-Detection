@@ -20,6 +20,14 @@
 
 'use strict';
 
+// Node 20 does not have a native WebSocket global (added in Node 22).
+// @supabase/supabase-js always initializes a realtime client internally,
+// which requires WebSocket to exist — even though we never use realtime
+// features here (only auth.admin.listUsers). Polyfill it with `ws`.
+if (typeof globalThis.WebSocket === 'undefined') {
+  globalThis.WebSocket = require('ws');
+}
+
 const { createClient } = require('@supabase/supabase-js');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
