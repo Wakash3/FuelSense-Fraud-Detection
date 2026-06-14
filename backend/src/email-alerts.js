@@ -6,6 +6,10 @@
  * - Delivery flagged
  * - Daily reconciliation variance
  * - Reading gap (ATG offline)
+ *
+ * UPDATED: Every alert function now accepts an optional `recipients` array
+ * (resolved per-station via alert-recipients.js). If omitted or empty,
+ * falls back to the static ALERT_TO_EMAIL env var so nothing breaks.
  */
 
 'use strict';
@@ -24,7 +28,7 @@ if (process.env.RESEND_API_KEY) {
 }
 
 const FROM = process.env.ALERT_FROM_EMAIL || 'alerts@mafutasalama.co.ke';
-const TO   = process.env.ALERT_TO_EMAIL   || process.env.ALERT_EMAIL || 'bernicewakarindi@gmail.com';
+const DEFAULT_TO = process.env.ALERT_TO_EMAIL || process.env.ALERT_EMAIL || 'bernicewakarindi@gmail.com';
 
 // ── SMS Setup (Africa's Talking) ────────────────────────────────────────────
 let sms = null;
@@ -67,7 +71,7 @@ async function sendSMS(phoneNumber, message) {
     }
 
     const truncatedMsg = message.substring(0, 160);
-    
+
     const options = {
       to: [formattedNumber],
       message: truncatedMsg,
@@ -97,7 +101,21 @@ function recordAlertSent(alertKey) {
 }
 
 function getAlertEmail() {
-  return TO;
+  return DEFAULT_TO;
+}
+
+/**
+ * Resolve the final "to" list for an alert email.
+ * Uses the per-station `recipients` array if provided and non-empty,
+ * otherwise falls back to the static ALERT_TO_EMAIL env var.
+ * @param {string[]|null} recipients
+ * @returns {string[]}
+ */
+function resolveRecipients(recipients) {
+  if (Array.isArray(recipients) && recipients.length > 0) {
+    return recipients;
+  }
+  return DEFAULT_TO.split(',').map((e) => e.trim()).filter(Boolean);
 }
 
 /**
@@ -106,10 +124,13 @@ function getAlertEmail() {
  * @param {string} htmlBody
  * @param {boolean} useCooldown
  * @param {string} alertKey
+ * @param {string[]|null} recipients - resolved per-station recipient emails
  */
-async function sendAlert(subject, htmlBody, useCooldown = false, alertKey = null) {
-  if (!TO) {
-    console.warn('[EMAIL] Alert email not set — skipping email alert');
+async function sendAlert(subject, htmlBody, useCooldown = false, alertKey = null, recipients = null) {
+  const toList = resolveRecipients(recipients);
+
+  if (toList.length === 0) {
+    console.warn('[EMAIL] No recipients resolved — skipping email alert');
     return;
   }
 
@@ -119,7 +140,7 @@ async function sendAlert(subject, htmlBody, useCooldown = false, alertKey = null
   }
 
   if (!resend) {
-    console.log(`[EMAIL] Would send alert: ${subject}`);
+    console.log(`[EMAIL] Would send alert: ${subject} -> ${toList.join(', ')}`);
     if (useCooldown && alertKey) recordAlertSent(alertKey);
     return;
   }
@@ -127,7 +148,7 @@ async function sendAlert(subject, htmlBody, useCooldown = false, alertKey = null
   try {
     const { data, error } = await resend.emails.send({
       from: FROM,
-      to: TO.split(',').map(e => e.trim()),
+      to: toList,
       subject: `[FuelSense] ${subject}`,
       html: wrapHTML(subject, htmlBody),
     });
@@ -135,7 +156,7 @@ async function sendAlert(subject, htmlBody, useCooldown = false, alertKey = null
     if (error) {
       console.error('[EMAIL] Failed to send alert:', error);
     } else {
-      console.log('[EMAIL] Alert sent:', subject, '→', data.id);
+      console.log('[EMAIL] Alert sent:', subject, '→', toList.join(', '), '(', data.id, ')');
       if (useCooldown && alertKey) recordAlertSent(alertKey);
     }
   } catch (err) {
@@ -170,8 +191,8 @@ function wrapHTML(title, content) {
       ${content}
       <hr style="border:none;border-top:1px solid #f0f0f0;margin:24px 0;">
       <p style="color:#999;font-size:12px;margin:0;">
-        This is an automated alert from FuelSense. 
-        Log in to your dashboard at 
+        This is an automated alert from FuelSense.
+        Log in to your dashboard at
         <a href="https://fuelsense-dashboard.vercel.app" style="color:#1a1a2e;">fuelsense-dashboard.vercel.app</a>
         to view details.
       </p>
@@ -192,12 +213,10 @@ function wrapHTML(title, content) {
  * Critical alert - sends BOTH email and SMS
  * For emergencies: low stock <10%, ATG offline, high water, flagged deliveries
  */
-async function sendCriticalAlert(tankNumber, fuelType, fillPct, litres, alertType = 'low_stock') {
-  const alertKey = `${alertType}_${tankNumber}`;
-  
+async function sendCriticalAlert(tankNumber, fuelType, fillPct, litres, alertType = 'low_stock', stationName = 'Station', recipients = null) {
   // Send email
-  await alertLowStock(tankNumber, fuelType, fillPct, litres);
-  
+  await alertLowStock(tankNumber, fuelType, fillPct, litres, stationName, recipients);
+
   // Send SMS
   const smsMessage = `🚨 FUELSENSE: Tank ${tankNumber} ${fuelType} at ${fillPct}%! ${Math.round(litres)}L left. REFILL NOW!`;
   await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
@@ -206,26 +225,32 @@ async function sendCriticalAlert(tankNumber, fuelType, fillPct, litres, alertTyp
 /**
  * ATG Offline Alert (SMS + Email)
  */
-async function sendOfflineAlert(tankNumber, minutesAgo) {
+async function sendOfflineAlert(tankNumber, minutesAgo, stationName = 'Station', recipients = null) {
   const alertKey = `offline_${tankNumber}`;
-  
+
   if (shouldSendAlert(alertKey, 60)) {
     const emailMessage = `Tank ${tankNumber} has not sent a reading for ${minutesAgo} minutes.`;
     const smsMessage = `🔴 FUELSENSE: Tank ${tankNumber} offline for ${minutesAgo} min! Check ATG connection.`;
-    
+
     // Send email
     const content = `
       <div style="background:#fdecea;border:1px solid #f5c6cb;border-radius:8px;padding:16px;margin-bottom:16px;">
         <strong style="color:#721c24;">🔴 ATG probe is not sending readings</strong>
       </div>
+      <table style="width:100%;border-collapse:collapse;">
+        <tr style="border-bottom:1px solid #f0f0f0;">
+          <td style="padding:10px 0;color:#666;font-size:13px;">Station</td>
+          <td style="padding:10px 0;color:#1a1a2e;font-weight:600;font-size:13px;">${stationName}</td>
+        </tr>
+      </table>
       <p style="color:#1a1a2e;font-size:13px;">Tank ${tankNumber} has not sent a reading for ${minutesAgo} minutes.</p>
       <p style="color:#721c24;font-size:13px;margin-top:16px;">
         <strong>Action required:</strong> Check the ATG console, IoT gateway connection, and network connectivity.
       </p>
     `;
-    
-    await sendAlert(`🔴 ATG Offline — Tank ${tankNumber}`, content, false);
-    
+
+    await sendAlert(`🔴 ATG Offline — Tank ${tankNumber}`, content, false, null, recipients);
+
     // Send SMS
     await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
     recordAlertSent(alertKey);
@@ -236,10 +261,10 @@ async function sendOfflineAlert(tankNumber, minutesAgo) {
  * Low stock alert — tank below threshold (default 20%)
  * Critical if below 10% - sends SMS
  */
-async function alertLowStock(tankNumber, fuelType, fillPct, nsvLitres, stationName = 'Station') {
+async function alertLowStock(tankNumber, fuelType, fillPct, nsvLitres, stationName = 'Station', recipients = null) {
   const alertKey = `low_stock_${tankNumber}`;
   const isCritical = fillPct < 10;
-  
+
   const content = `
     <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:16px;margin-bottom:16px;">
       <strong style="color:#856404;">⚠️ Tank ${tankNumber} is running low</strong>
@@ -266,9 +291,9 @@ async function alertLowStock(tankNumber, fuelType, fillPct, nsvLitres, stationNa
       <strong>Action required:</strong> Schedule a fuel delivery immediately to avoid stock-out.
     </p>
   `;
-  
-  await sendAlert(`⚠️ Low Stock — Tank ${tankNumber} (${fuelType?.toUpperCase() || 'Unknown'})`, content, true, alertKey);
-  
+
+  await sendAlert(`⚠️ Low Stock — Tank ${tankNumber} (${fuelType?.toUpperCase() || 'Unknown'})`, content, true, alertKey, recipients);
+
   // Send SMS for critical low stock (<10%)
   if (isCritical) {
     const smsMessage = `🚨 FUELSENSE CRITICAL: Tank ${tankNumber} ${fuelType} at ${fillPct}%! ${Math.round(nsvLitres)}L left. REFILL NOW!`;
@@ -279,9 +304,9 @@ async function alertLowStock(tankNumber, fuelType, fillPct, nsvLitres, stationNa
 /**
  * High water alert — water level above threshold (default 50mm)
  */
-async function alertHighWater(tankNumber, fuelType, waterMm, stationName = 'Station') {
+async function alertHighWater(tankNumber, fuelType, waterMm, stationName = 'Station', recipients = null) {
   const alertKey = `high_water_${tankNumber}`;
-  
+
   const content = `
     <div style="background:#fdecea;border:1px solid #f5c6cb;border-radius:8px;padding:16px;margin-bottom:16px;">
       <strong style="color:#721c24;">🚨 High water detected in Tank ${tankNumber}</strong>
@@ -304,9 +329,9 @@ async function alertHighWater(tankNumber, fuelType, waterMm, stationName = 'Stat
       <strong>Action required:</strong> Inspect the tank immediately. Water contamination can damage equipment and fuel quality.
     </p>
   `;
-  
-  await sendAlert(`🚨 High Water Level — Tank ${tankNumber}`, content, true, alertKey);
-  
+
+  await sendAlert(`🚨 High Water Level — Tank ${tankNumber}`, content, true, alertKey, recipients);
+
   // Send SMS for high water
   const smsMessage = `💧 FUELSENSE: Tank ${tankNumber} has ${waterMm}mm water! Inspect immediately.`;
   await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
@@ -315,11 +340,11 @@ async function alertHighWater(tankNumber, fuelType, waterMm, stationName = 'Stat
 /**
  * Delivery flagged alert
  */
-async function alertFlaggedDelivery(bolNumber, variance, fuelType, stationName = 'Station') {
+async function alertFlaggedDelivery(bolNumber, variance, fuelType, stationName = 'Station', recipients = null) {
   const alertKey = `flagged_delivery_${bolNumber}`;
   const varianceLitres = parseFloat(variance || 0);
   const variancePct = Math.abs((varianceLitres / 100) * 100);
-  
+
   const content = `
     <div style="background:#fdecea;border:1px solid #f5c6cb;border-radius:8px;padding:16px;margin-bottom:16px;">
       <strong style="color:#721c24;">🚨 Delivery variance exceeds tolerance</strong>
@@ -348,9 +373,9 @@ async function alertFlaggedDelivery(bolNumber, variance, fuelType, stationName =
       <strong>Action required:</strong> Review the delivery records and contact the supplier to dispute the variance.
     </p>
   `;
-  
-  await sendAlert(`🚨 Delivery Flagged — ${bolNumber}`, content, true, alertKey);
-  
+
+  await sendAlert(`🚨 Delivery Flagged — ${bolNumber}`, content, true, alertKey, recipients);
+
   // Send SMS for flagged delivery
   const smsMessage = `🚛 FUELSENSE: Delivery ${bolNumber} flagged! Variance: ${varianceLitres.toFixed(0)}L. Check dashboard.`;
   await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
@@ -359,9 +384,9 @@ async function alertFlaggedDelivery(bolNumber, variance, fuelType, stationName =
 /**
  * Reading gap alert — ATG offline
  */
-async function alertReadingGap(message, stationName = 'Station') {
+async function alertReadingGap(message, stationName = 'Station', recipients = null) {
   const alertKey = `atg_offline_${stationName}`;
-  
+
   const content = `
     <div style="background:#fdecea;border:1px solid #f5c6cb;border-radius:8px;padding:16px;margin-bottom:16px;">
       <strong style="color:#721c24;">🔴 ATG probe is not sending readings</strong>
@@ -377,9 +402,9 @@ async function alertReadingGap(message, stationName = 'Station') {
       <strong>Action required:</strong> Check the ATG console, IoT gateway connection, and network connectivity at the station.
     </p>
   `;
-  
-  await sendAlert('🔴 ATG Offline — Reading Gap Detected', content, true, alertKey);
-  
+
+  await sendAlert('🔴 ATG Offline — Reading Gap Detected', content, true, alertKey, recipients);
+
   // Send SMS for ATG offline
   const smsMessage = `🔴 FUELSENSE: ${message.substring(0, 140)}`;
   await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
@@ -388,10 +413,10 @@ async function alertReadingGap(message, stationName = 'Station') {
 /**
  * Daily reconciliation variance alert
  */
-async function alertDailyVariance(tankNumber, fuelType, varianceLitres, date, stationName = 'Station') {
+async function alertDailyVariance(tankNumber, fuelType, varianceLitres, date, stationName = 'Station', recipients = null) {
   const alertKey = `daily_variance_${tankNumber}_${date}`;
   const isNegative = varianceLitres < 0;
-  
+
   const content = `
     <div style="background:${isNegative ? '#fdecea' : '#fff3cd'};border:1px solid ${isNegative ? '#f5c6cb' : '#ffc107'};border-radius:8px;padding:16px;margin-bottom:16px;">
       <strong style="color:${isNegative ? '#721c24' : '#856404'};">
@@ -424,9 +449,9 @@ async function alertDailyVariance(tankNumber, fuelType, varianceLitres, date, st
         : 'Verify pump sales figures and delivery records for this date.'}
     </p>
   `;
-  
-  await sendAlert(`📋 Daily Variance Alert — Tank ${tankNumber}`, content, true, alertKey);
-  
+
+  await sendAlert(`📋 Daily Variance Alert — Tank ${tankNumber}`, content, true, alertKey, recipients);
+
   // Send SMS for variance
   const smsMessage = `📊 FUELSENSE: Tank ${tankNumber} variance ${varianceLitres > 0 ? '+' : ''}${Math.abs(varianceLitres).toFixed(0)}L. ${isNegative ? 'Possible loss!' : 'Check records.'}`;
   await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
@@ -435,9 +460,9 @@ async function alertDailyVariance(tankNumber, fuelType, varianceLitres, date, st
 /**
  * Test Alert (for debugging)
  */
-async function sendTestAlert() {
+async function sendTestAlert(recipients = null) {
   console.log('[EMAIL] Sending test alert...');
-  
+
   if (!resend) {
     console.error('[EMAIL] Resend not configured. Add RESEND_API_KEY to environment variables.');
     return false;
@@ -450,8 +475,8 @@ async function sendTestAlert() {
     <p style="color:#1a1a2e;font-size:13px;">If you received this, email notifications are working correctly!</p>
     <p style="color:#1a1a2e;font-size:13px;"><strong>Time:</strong> ${new Date().toLocaleString()}</p>
   `;
-  
-  await sendAlert('🧪 Test Alert', content, false);
+
+  await sendAlert('🧪 Test Alert', content, false, null, recipients);
   console.log('[EMAIL] Test alert sent successfully');
   return true;
 }
@@ -464,13 +489,13 @@ async function sendTestSMS() {
     console.error('[SMS] SMS not configured. Add AT_API_KEY to environment variables.');
     return false;
   }
-  
+
   const phoneNumber = process.env.ALERT_PHONE_NUMBER;
   if (!phoneNumber) {
     console.error('[SMS] ALERT_PHONE_NUMBER not set');
     return false;
   }
-  
+
   const testMessage = "🧪 FUELSENSE TEST: This is a test SMS from your FuelSense alert system. If you receive this, SMS alerts are working!";
   await sendSMS(phoneNumber, testMessage);
   console.log('[SMS] Test SMS sent to', phoneNumber);
@@ -478,8 +503,8 @@ async function sendTestSMS() {
 }
 
 // Export legacy function names for backward compatibility
-async function alertDeliveryFlagged(delivery) {
-  return alertFlaggedDelivery(delivery.bol_number, delivery.variance_litres, delivery.fuel_type);
+async function alertDeliveryFlagged(delivery, stationName = 'Station', recipients = null) {
+  return alertFlaggedDelivery(delivery.bol_number, delivery.variance_litres, delivery.fuel_type, stationName, recipients);
 }
 
 module.exports = {
@@ -491,6 +516,7 @@ module.exports = {
   alertDailyVariance,
   sendTestAlert,
   sendTestSMS,
+  getAlertEmail,
   // SMS functions
   sendSMS,
   sendCriticalAlert,

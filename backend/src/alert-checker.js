@@ -12,6 +12,7 @@ const {
   sendOfflineAlert,
   sendSMS
 } = require('./email-alerts');
+const { getAlertRecipients } = require('./alert-recipients');
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
@@ -44,11 +45,15 @@ async function runAlertCheck() {
     }
 
     // 1. Check tanks
+    // NOTE: t.station_id and s.name assume `tanks.station_id` references
+    // `stations.id`. Adjust the join/column names if your schema differs.
     const tankRes = await db.query(`
       SELECT t.id, t.tank_number, t.fuel_type, t.capacity_litres,
+             t.station_id, s.name AS station_name,
              r.nsv_litres, r.water_mm, r.innage_mm, r.recorded_at,
              ROUND((r.nsv_litres / t.capacity_litres) * 100, 1) AS fill_pct
         FROM tanks t
+        LEFT JOIN stations s ON s.id = t.station_id
         JOIN LATERAL (
           SELECT * FROM atg_readings
           WHERE tank_id = t.id
@@ -59,13 +64,15 @@ async function runAlertCheck() {
 
     for (const tank of tankRes.rows) {
       const fillPct = parseFloat(tank.fill_pct);
+      const stationName = tank.station_name || 'Station';
+      const recipients = await getAlertRecipients(db, tank.station_id);
 
       // CRITICAL Low Stock (<10%) - Send SMS + Email
       if (fillPct < 10 && fillPct > 0) {
         const key = 'CRITICAL_LOW_STOCK_TANK_' + tank.tank_number;
         if (await shouldAlert(key)) {
-          console.log('[ALERT-CHECK] CRITICAL low stock Tank', tank.tank_number, fillPct + '%');
-          await sendCriticalAlert(tank.tank_number, tank.fuel_type, fillPct, tank.nsv_litres);
+          console.log('[ALERT-CHECK] CRITICAL low stock Tank', tank.tank_number, fillPct + '%', '->', recipients.join(', '));
+          await sendCriticalAlert(tank.tank_number, tank.fuel_type, fillPct, tank.nsv_litres, 'low_stock', stationName, recipients);
           await markAlertSent(key);
         } else {
           console.log('[ALERT-CHECK] Critical low stock cooldown active for Tank', tank.tank_number);
@@ -75,8 +82,8 @@ async function runAlertCheck() {
       else if (fillPct < 20 && fillPct >= 10) {
         const key = 'LOW_STOCK_TANK_' + tank.tank_number;
         if (await shouldAlert(key)) {
-          console.log('[ALERT-CHECK] Low stock Tank', tank.tank_number, fillPct + '%');
-          await alertLowStock(tank.tank_number, tank.fuel_type, fillPct, tank.nsv_litres);
+          console.log('[ALERT-CHECK] Low stock Tank', tank.tank_number, fillPct + '%', '->', recipients.join(', '));
+          await alertLowStock(tank.tank_number, tank.fuel_type, fillPct, tank.nsv_litres, stationName, recipients);
           await markAlertSent(key);
         } else {
           console.log('[ALERT-CHECK] Low stock cooldown active for Tank', tank.tank_number);
@@ -87,8 +94,8 @@ async function runAlertCheck() {
       if (parseFloat(tank.water_mm) > 50) {
         const key = 'HIGH_WATER_TANK_' + tank.tank_number;
         if (await shouldAlert(key)) {
-          console.log('[ALERT-CHECK] High water Tank', tank.tank_number, tank.water_mm + 'mm');
-          await alertHighWater(tank.tank_number, tank.fuel_type, tank.water_mm);
+          console.log('[ALERT-CHECK] High water Tank', tank.tank_number, tank.water_mm + 'mm', '->', recipients.join(', '));
+          await alertHighWater(tank.tank_number, tank.fuel_type, tank.water_mm, stationName, recipients);
           await markAlertSent(key);
         } else {
           console.log('[ALERT-CHECK] High water cooldown active for Tank', tank.tank_number);
@@ -101,8 +108,8 @@ async function runAlertCheck() {
       if (minutesAgo > 10) {
         const key = 'READING_GAP_TANK_' + tank.tank_number;
         if (await shouldAlert(key)) {
-          console.log('[ALERT-CHECK] Reading gap Tank', tank.tank_number, minutesAgo.toFixed(0) + ' min');
-          await sendOfflineAlert(tank.tank_number, minutesAgo.toFixed(0));
+          console.log('[ALERT-CHECK] Reading gap Tank', tank.tank_number, minutesAgo.toFixed(0) + ' min', '->', recipients.join(', '));
+          await sendOfflineAlert(tank.tank_number, minutesAgo.toFixed(0), stationName, recipients);
           await markAlertSent(key);
         }
       }
@@ -110,17 +117,21 @@ async function runAlertCheck() {
 
     // 2. Flagged deliveries — SMS + Email
     const delivRes = await db.query(`
-      SELECT d.*, t.tank_number, t.fuel_type
+      SELECT d.*, t.tank_number, t.fuel_type, t.station_id, s.name AS station_name
         FROM deliveries d
         JOIN tanks t ON t.id = d.tank_id
+        LEFT JOIN stations s ON s.id = t.station_id
        WHERE d.status = 'flagged'
     `);
 
     for (const delivery of delivRes.rows) {
       const key = 'FLAGGED_DELIVERY_' + delivery.id;
       if (await shouldAlert(key)) {
-        console.log('[ALERT-CHECK] Flagged delivery:', delivery.bol_number);
-        await alertDeliveryFlagged(delivery);
+        const stationName = delivery.station_name || 'Station';
+        const recipients = await getAlertRecipients(db, delivery.station_id);
+
+        console.log('[ALERT-CHECK] Flagged delivery:', delivery.bol_number, '->', recipients.join(', '));
+        await alertDeliveryFlagged(delivery, stationName, recipients);
         // Send SMS for flagged delivery
         const smsMessage = `🚛 FUELSENSE: Delivery ${delivery.bol_number} flagged! Variance: ${delivery.variance_litres || 0}L. Check dashboard.`;
         await sendSMS(process.env.ALERT_PHONE_NUMBER, smsMessage);
@@ -130,9 +141,10 @@ async function runAlertCheck() {
 
     // 3. High daily variance > 500L — SMS + Email
     const reconRes = await db.query(`
-      SELECT r.*, t.tank_number, t.fuel_type
+      SELECT r.*, t.tank_number, t.fuel_type, t.station_id, s.name AS station_name
         FROM daily_reconciliation r
         JOIN tanks t ON t.id = r.tank_id
+        LEFT JOIN stations s ON s.id = t.station_id
        WHERE r.recon_date = CURRENT_DATE
          AND ABS(r.variance_litres) > 500
     `);
@@ -140,12 +152,17 @@ async function runAlertCheck() {
     for (const recon of reconRes.rows) {
       const key = 'DAILY_VARIANCE_TANK_' + recon.tank_number + '_' + recon.recon_date;
       if (await shouldAlert(key)) {
-        console.log('[ALERT-CHECK] High variance Tank', recon.tank_number, recon.variance_litres + 'L');
+        const stationName = recon.station_name || 'Station';
+        const recipients = await getAlertRecipients(db, recon.station_id);
+
+        console.log('[ALERT-CHECK] High variance Tank', recon.tank_number, recon.variance_litres + 'L', '->', recipients.join(', '));
         await alertDailyVariance(
           recon.tank_number,
           recon.fuel_type,
           parseFloat(recon.variance_litres),
-          recon.recon_date
+          recon.recon_date,
+          stationName,
+          recipients
         );
         // Send SMS for high variance
         const isNegative = parseFloat(recon.variance_litres) < 0;
