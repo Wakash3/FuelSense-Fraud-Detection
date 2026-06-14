@@ -15,16 +15,31 @@
 'use strict';
 
 const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 const AfricasTalking = require('africastalking');
 
 // ── Email Setup ──────────────────────────────────────────────────────────────
 let resend = null;
+let gmailTransporter = null;
 let lastAlertSent = {};
 
-// Initialize Resend if API key is available
+// Primary: Gmail SMTP (works for any recipient, no domain verification needed)
+if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+  gmailTransporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_APP_PASSWORD,
+    },
+  });
+  console.log('[EMAIL] Gmail SMTP initialized for alerts (sender:', process.env.GMAIL_USER + ')');
+}
+
+// Fallback: Resend (only delivers to the account owner's email unless a
+// verified domain is configured as ALERT_FROM_EMAIL)
 if (process.env.RESEND_API_KEY) {
   resend = new Resend(process.env.RESEND_API_KEY);
-  console.log('[EMAIL] Resend initialized for alerts');
+  console.log('[EMAIL] Resend initialized as fallback for alerts');
 }
 
 const FROM = process.env.ALERT_FROM_EMAIL || 'alerts@mafutasalama.co.ke';
@@ -139,6 +154,24 @@ async function sendAlert(subject, htmlBody, useCooldown = false, alertKey = null
     return;
   }
 
+  // ── Primary: Gmail SMTP — works for any recipient, no domain needed ───────
+  if (gmailTransporter) {
+    try {
+      const info = await gmailTransporter.sendMail({
+        from: `"FuelSense Alerts" <${process.env.GMAIL_USER}>`,
+        to: toList.join(', '),
+        subject: `[FuelSense] ${subject}`,
+        html: wrapHTML(subject, htmlBody),
+      });
+      console.log('[EMAIL] Alert sent via Gmail:', subject, '→', toList.join(', '), '(', info.messageId, ')');
+      if (useCooldown && alertKey) recordAlertSent(alertKey);
+    } catch (err) {
+      console.error('[EMAIL] Gmail send error:', err.message);
+    }
+    return;
+  }
+
+  // ── Fallback: Resend (sandbox sender only delivers to account owner) ──────
   if (!resend) {
     console.log(`[EMAIL] Would send alert: ${subject} -> ${toList.join(', ')}`);
     if (useCooldown && alertKey) recordAlertSent(alertKey);
