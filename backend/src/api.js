@@ -845,23 +845,47 @@ app.post('/api/stations', async (req, res) => {
 
 // ── POST /api/contact/enterprise ─────────────────────────────────────────────
 app.post('/api/contact/enterprise', async (req, res) => {
+  console.log('[CONTACT] Received request body:', req.body);
+  
   const { name, email, phone, company, stations, message } = req.body;
-  if (!name || !email || !company) return res.status(400).json({ error: 'Name, email and company are required' });
+  
+  // Validate required fields
+  if (!name || !email || !company) {
+    console.log('[CONTACT] Missing required fields:', { name, email, company });
+    return res.status(400).json({ 
+      error: 'Name, email and company are required',
+      received: { name, email, company }
+    });
+  }
 
+  // Check Gmail configuration
   if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
     console.log('[CONTACT] Gmail not configured — logging enquiry:', req.body);
-    return res.json({ ok: true });
+    return res.status(200).json({ 
+      ok: true, 
+      message: 'Enquiry received (email not sent - Gmail not configured)',
+      data: req.body
+    });
   }
 
   try {
+    // Create transporter
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+      auth: { 
+        user: process.env.GMAIL_USER, 
+        pass: process.env.GMAIL_APP_PASSWORD 
+      },
     });
 
-    await transporter.sendMail({
+    // Verify transporter works
+    await transporter.verify();
+    console.log('[CONTACT] Gmail transporter verified');
+
+    // Send email
+    const mailOptions = {
       from: `"FuelSense Contact" <${process.env.GMAIL_USER}>`,
-      to:   process.env.GMAIL_USER,
+      to: process.env.GMAIL_USER,
       replyTo: email,
       subject: `🏢 Enterprise Enquiry — ${company}`,
       html: `
@@ -876,20 +900,35 @@ app.post('/api/contact/enterprise', async (req, res) => {
               <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Email</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;"><a href="mailto:${email}">${email}</a></td></tr>
               <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Phone</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${phone || 'Not provided'}</td></tr>
               <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Company</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;">${company}</td></tr>
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Stations</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${stations}</td></tr>
+              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Stations</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${stations || 'Not specified'}</td></tr>
               <tr><td style="padding:10px 0;color:#666;font-size:13px;vertical-align:top;">Message</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${message || 'No message'}</td></tr>
             </table>
           </div>
           <div style="text-align:center;padding:12px;color:#999;font-size:11px;">FuelSense · Mafuta Salama · Enterprise Sales</div>
         </div>
       `,
-    });
+    };
 
+    const info = await transporter.sendMail(mailOptions);
+    console.log('[CONTACT] Email sent successfully:', info.messageId);
     console.log('[CONTACT] Enterprise enquiry from:', email, '|', company);
-    res.json({ ok: true });
+    
+    res.status(200).json({ 
+      ok: true, 
+      message: 'Enquiry sent successfully!',
+      messageId: info.messageId 
+    });
+    
   } catch (err) {
     console.error('[CONTACT] Failed to send enquiry email:', err.message);
-    res.status(500).json({ error: 'Failed to send enquiry. Please email hello@mafutasalama.co.ke directly.' });
+    console.error('[CONTACT] Full error:', err);
+    
+    // Send more detailed error response for debugging
+    res.status(500).json({ 
+      error: 'Failed to send enquiry. Please email hello@mafutasalama.co.ke directly.',
+      details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 });
 
