@@ -23,7 +23,7 @@ const allowedOrigins = [
 ];
 
 app.use(cors({
-  origin: (origin, cb) => cb(null, true), // allow all — tighten after domain verified
+  origin: (origin, cb) => cb(null, true),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
@@ -32,7 +32,94 @@ app.use(cors({
 
 app.use(express.json());
 
-// Initialize Resend
+// ── POST /api/contact/enterprise ─────────────────────────────────────────────
+// PLACED AT THE VERY TOP FOR MAXIMUM RELIABILITY
+app.post('/api/contact/enterprise', async (req, res) => {
+  console.log('[CONTACT] ===== START =====');
+  console.log('[CONTACT] Headers:', req.headers);
+  console.log('[CONTACT] Body:', req.body);
+  
+  try {
+    const { name, email, phone, company, stations, message } = req.body;
+    
+    // Simple validation
+    if (!name || !email || !company) {
+      console.log('[CONTACT] Missing required fields');
+      return res.status(400).json({ 
+        error: 'Name, email and company are required',
+        received: { name: !!name, email: !!email, company: !!company }
+      });
+    }
+
+    // Check Gmail config
+    console.log('[CONTACT] GMAIL_USER:', process.env.GMAIL_USER ? 'SET' : 'NOT SET');
+    console.log('[CONTACT] GMAIL_APP_PASSWORD:', process.env.GMAIL_APP_PASSWORD ? 'SET' : 'NOT SET');
+
+    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+      console.log('[CONTACT] Gmail not configured, returning success');
+      return res.json({ 
+        ok: true, 
+        message: 'Enquiry received (Gmail not configured)',
+        data: { name, email, company }
+      });
+    }
+
+    // Simple email send
+    console.log('[CONTACT] Attempting to send email...');
+    
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { 
+        user: process.env.GMAIL_USER, 
+        pass: process.env.GMAIL_APP_PASSWORD 
+      },
+    });
+
+    const mailOptions = {
+      from: `"FuelSense" <${process.env.GMAIL_USER}>`,
+      to: process.env.GMAIL_USER,
+      replyTo: email,
+      subject: `Enterprise Enquiry - ${company}`,
+      text: `
+Name: ${name}
+Email: ${email}
+Phone: ${phone || 'Not provided'}
+Company: ${company}
+Stations: ${stations || 'Not specified'}
+Message: ${message || 'No message'}
+      `,
+      html: `
+        <h2>Enterprise Enquiry</h2>
+        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Phone:</strong> ${phone || 'Not provided'}</p>
+        <p><strong>Company:</strong> ${company}</p>
+        <p><strong>Stations:</strong> ${stations || 'Not specified'}</p>
+        <p><strong>Message:</strong> ${message || 'No message'}</p>
+      `
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log('[CONTACT] Email sent:', info.messageId);
+    
+    res.json({ 
+      ok: true, 
+      message: 'Enquiry sent successfully!',
+      messageId: info.messageId 
+    });
+    
+  } catch (err) {
+    console.error('[CONTACT] ERROR:', err.message);
+    console.error('[CONTACT] Stack:', err.stack);
+    res.status(500).json({ 
+      error: 'Failed to send enquiry',
+      message: err.message,
+      details: err.stack
+    });
+  }
+});
+
+// ── Initialize Resend ────────────────────────────────────────────────────────
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 // ── DB ────────────────────────────────────────────────────────────────────────
@@ -52,7 +139,6 @@ function getRoleAccessLevel(role) {
 }
 
 // ── Multi-tenant: resolve caller's organization_id from supabase_uid ─────────
-// Returns { orgId, role, stationId, accessLevel } or null if not found
 async function resolveUser(db, supabaseUid) {
   if (!supabaseUid) return null;
   const res = await db.query(
@@ -98,7 +184,6 @@ app.get('/api/user-profile', async (req, res) => {
 });
 
 // ── GET /api/stations ─────────────────────────────────────────────────────────
-// Returns stations scoped to the caller's organization only
 app.get('/api/stations', async (req, res) => {
   try {
     const client = await getDb();
@@ -109,7 +194,6 @@ app.get('/api/stations', async (req, res) => {
     let query  = `SELECT id, name, location FROM stations WHERE organization_id = $1`;
     const params = [user.orgId];
 
-    // Station-scoped roles: only see their assigned station
     if (user.accessLevel < 65 && user.stationId) {
       params.push(user.stationId);
       query += ` AND id = $2`;
@@ -135,7 +219,6 @@ app.get('/api/tanks', async (req, res) => {
     const params = [user.orgId];
     let where = `s.organization_id = $1`;
 
-    // Further filter by specific station if requested
     if (stationId) {
       params.push(stationId);
       where += ` AND t.station_id = $${params.length}`;
@@ -492,7 +575,6 @@ app.get('/api/plans', async (req, res) => {
 });
 
 // ── GET /api/subscription ─────────────────────────────────────────────────────
-// Now org-scoped: pass uid to resolve org, or station_id for backwards compat
 app.get('/api/subscription', async (req, res) => {
   try {
     const client = await getDb();
@@ -511,7 +593,6 @@ app.get('/api/subscription', async (req, res) => {
 
     if (!orgId) return res.json(null);
 
-    // First try org-level subscription
     const orgSub = await client.query(
       `SELECT s.*, p.name AS plan_name, p.price_monthly, p.price_annual, p.max_stations, p.max_tanks, p.features
          FROM subscriptions s JOIN subscription_plans p ON p.id = s.plan_id
@@ -520,7 +601,6 @@ app.get('/api/subscription', async (req, res) => {
     );
     if (orgSub.rows.length) return res.json(orgSub.rows[0]);
 
-    // Fall back to station-level subscription for backwards compat
     if (stationId) {
       const stSub = await client.query(
         `SELECT s.*, p.name AS plan_name, p.price_monthly, p.price_annual, p.max_stations, p.max_tanks, p.features
@@ -531,7 +611,6 @@ app.get('/api/subscription', async (req, res) => {
       if (stSub.rows.length) return res.json(stSub.rows[0]);
     }
 
-    // Check org trial status
     const org = await client.query(`SELECT * FROM organizations WHERE id=$1`, [orgId]);
     if (org.rows.length) {
       const o = org.rows[0];
@@ -567,11 +646,9 @@ app.post('/api/payments/initiate', async (req, res) => {
       plan = planRes.rows[0];
       amount = billing_cycle === 'annual' ? plan.price_annual : plan.price_monthly;
       
-      // ✅ DYNAMIC PAYMENT CAP — uses MAX_PAYMENT_AMOUNT env var
-      if (process.env.MAX_PAYMENT_AMOUNT) amount = Math.min(amount, parseFloat(process.env.MAX_PAYMENT_AMOUNT)); // temp cap — remove MAX_PAYMENT_AMOUNT env var when Pesapal raises limit
+      if (process.env.MAX_PAYMENT_AMOUNT) amount = Math.min(amount, parseFloat(process.env.MAX_PAYMENT_AMOUNT));
     }
 
-    // Get org_id from station
     const stRes = await client.query(`SELECT organization_id FROM stations WHERE id=$1`, [station_id]);
     const orgId = stRes.rows[0]?.organization_id || null;
 
@@ -626,7 +703,6 @@ app.get('/api/payments/callback', async (req, res) => {
 
           const orgId = payment.organization_id;
           if (orgId) {
-            // Org-level subscription (new model)
             await client.query(
               `INSERT INTO subscriptions (station_id, organization_id, plan_id, billing_cycle, status, current_period_start, current_period_end)
                VALUES ($1,$2,$3,$4,'active',$5,$6)
@@ -635,7 +711,6 @@ app.get('/api/payments/callback', async (req, res) => {
                  current_period_start=EXCLUDED.current_period_start, current_period_end=EXCLUDED.current_period_end`,
               [payment.station_id, orgId, plan.id, payment.billing_cycle, now, end]
             );
-            // Update org subscription status
             await client.query(
               `UPDATE organizations SET subscription_status='active', plan_id=$1 WHERE id=$2`,
               [plan.id, orgId]
@@ -725,7 +800,6 @@ app.get('/api/debug-pesapal', (req, res) => {
 });
 
 // ── SUPER ADMIN: manage organizations ────────────────────────────────────────
-// POST /api/admin/organizations — create new client org + invite owner
 app.post('/api/admin/organizations', async (req, res) => {
   const { admin_email, name, slug, owner_email, plan_id, max_stations, max_tanks } = req.body;
   if (!admin_email || !name || !owner_email)
@@ -735,7 +809,6 @@ app.post('/api/admin/organizations', async (req, res) => {
     const isAdmin = await isSuperAdmin(client, admin_email);
     if (!isAdmin) return res.status(403).json({ error: 'Forbidden: super admin only' });
 
-    // Resolve plan limits
     let maxSt = max_stations || 1, maxTk = max_tanks || 5;
     if (plan_id) {
       const planRes = await client.query(`SELECT max_stations, max_tanks FROM subscription_plans WHERE id=$1`, [plan_id]);
@@ -756,7 +829,6 @@ app.post('/api/admin/organizations', async (req, res) => {
   }
 });
 
-// GET /api/admin/organizations — list all orgs (super admin only)
 app.get('/api/admin/organizations', async (req, res) => {
   const { admin_email } = req.query;
   try {
@@ -778,7 +850,6 @@ app.get('/api/admin/organizations', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/admin/organizations/:id — single org details
 app.get('/api/admin/organizations/:id', async (req, res) => {
   const { admin_email } = req.query;
   try {
@@ -796,7 +867,6 @@ app.get('/api/admin/organizations/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PUT /api/admin/user-profiles/:uid — update a user's role or station
 app.put('/api/admin/user-profiles/:uid', async (req, res) => {
   const { admin_email, role, station_id } = req.body;
   try {
@@ -822,7 +892,6 @@ app.post('/api/stations', async (req, res) => {
     const user   = await resolveUser(client, uid);
     if (!user || user.accessLevel < 100) return res.status(403).json({ error: 'Owner access required' });
 
-    // Check station limit
     const org = await client.query(`SELECT max_stations FROM organizations WHERE id=$1`, [user.orgId]);
     const countRes = await client.query(`SELECT COUNT(*) AS count FROM stations WHERE organization_id=$1`, [user.orgId]);
     const current = parseInt(countRes.rows[0].count);
@@ -843,95 +912,6 @@ app.post('/api/stations', async (req, res) => {
   }
 });
 
-// ── POST /api/contact/enterprise ─────────────────────────────────────────────
-app.post('/api/contact/enterprise', async (req, res) => {
-  console.log('[CONTACT] Received request body:', req.body);
-  
-  const { name, email, phone, company, stations, message } = req.body;
-  
-  // Validate required fields
-  if (!name || !email || !company) {
-    console.log('[CONTACT] Missing required fields:', { name, email, company });
-    return res.status(400).json({ 
-      error: 'Name, email and company are required',
-      received: { name, email, company }
-    });
-  }
-
-  // Check Gmail configuration
-  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-    console.log('[CONTACT] Gmail not configured — logging enquiry:', req.body);
-    return res.status(200).json({ 
-      ok: true, 
-      message: 'Enquiry received (email not sent - Gmail not configured)',
-      data: req.body
-    });
-  }
-
-  try {
-    // Create transporter
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { 
-        user: process.env.GMAIL_USER, 
-        pass: process.env.GMAIL_APP_PASSWORD 
-      },
-    });
-
-    // Verify transporter works
-    await transporter.verify();
-    console.log('[CONTACT] Gmail transporter verified');
-
-    // Send email
-    const mailOptions = {
-      from: `"FuelSense Contact" <${process.env.GMAIL_USER}>`,
-      to: process.env.GMAIL_USER,
-      replyTo: email,
-      subject: `🏢 Enterprise Enquiry — ${company}`,
-      html: `
-        <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;">
-          <div style="background:#1a1a2e;padding:20px 24px;border-radius:12px 12px 0 0;">
-            <div style="color:#fff;font-size:18px;font-weight:700;">⛽ FuelSense — Enterprise Enquiry</div>
-            <div style="color:#4CAF50;font-size:12px;margin-top:4px;">New lead from the billing page</div>
-          </div>
-          <div style="background:#fff;padding:24px;border-radius:0 0 12px 12px;border:1px solid #e0e0e0;">
-            <table style="width:100%;border-collapse:collapse;">
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;width:140px;">Name</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;">${name}</td></tr>
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Email</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;"><a href="mailto:${email}">${email}</a></td></tr>
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Phone</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${phone || 'Not provided'}</td></tr>
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Company</td><td style="padding:10px 0;font-weight:600;color:#1a1a2e;font-size:13px;">${company}</td></tr>
-              <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:10px 0;color:#666;font-size:13px;">Stations</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${stations || 'Not specified'}</td></tr>
-              <tr><td style="padding:10px 0;color:#666;font-size:13px;vertical-align:top;">Message</td><td style="padding:10px 0;color:#1a1a2e;font-size:13px;">${message || 'No message'}</td></tr>
-            </table>
-          </div>
-          <div style="text-align:center;padding:12px;color:#999;font-size:11px;">FuelSense · Mafuta Salama · Enterprise Sales</div>
-        </div>
-      `,
-    };
-
-    const info = await transporter.sendMail(mailOptions);
-    console.log('[CONTACT] Email sent successfully:', info.messageId);
-    console.log('[CONTACT] Enterprise enquiry from:', email, '|', company);
-    
-    res.status(200).json({ 
-      ok: true, 
-      message: 'Enquiry sent successfully!',
-      messageId: info.messageId 
-    });
-    
-  } catch (err) {
-    console.error('[CONTACT] Failed to send enquiry email:', err.message);
-    console.error('[CONTACT] Full error:', err);
-    
-    // Send more detailed error response for debugging
-    res.status(500).json({ 
-      error: 'Failed to send enquiry. Please email hello@mafutasalama.co.ke directly.',
-      details: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
-  }
-});
-
 // ── Start server ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log('[API] FuelSense API running on port ' + PORT);
@@ -949,7 +929,6 @@ async function checkExpiredSubscriptions() {
     );
     if (result.rows.length) {
       console.log(`[CRON] Expired ${result.rows.length} subscription(s)`);
-      // Also update org status if all their subs expired
       for (const row of result.rows) {
         if (row.organization_id) {
           await client.query(
