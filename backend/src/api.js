@@ -7,6 +7,7 @@ const { Client } = require('pg');
 const { getAlerts, acknowledgeAlert, checkHighWaterAlert, checkLowStockAlert } = require('./alerts');
 const { openShift, closeShift, getAllShifts, getShifts } = require('./shift-manager');
 const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
 const app          = express();
 const PORT         = process.env.API_PORT || 3001;
@@ -847,7 +848,6 @@ app.post('/api/contact/enterprise', async (req, res) => {
   const { name, email, phone, company, stations, message } = req.body;
   if (!name || !email || !company) return res.status(400).json({ error: 'Name, email and company are required' });
 
-  const nodemailer = require('nodemailer');
   if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
     console.log('[CONTACT] Gmail not configured — logging enquiry:', req.body);
     return res.json({ ok: true });
