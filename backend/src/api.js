@@ -57,9 +57,9 @@ app.post('/api/contact/enterprise', async (req, res) => {
   }
 
   try {
-    // Send email using Resend
+    // Send email using Resend with Gmail from address
     const { data, error } = await resend.emails.send({
-      from: 'FuelSense <noreply@fuelsense.com>',
+      from: `"FuelSense Contact" <${process.env.GMAIL_USER || 'noreply@fuelsense.com'}>`,
       to: 'bernicewakarindi@gmail.com',
       replyTo: email,
       subject: `Enterprise Enquiry — ${company}`,
