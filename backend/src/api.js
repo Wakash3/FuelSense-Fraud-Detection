@@ -25,78 +25,91 @@ app.use(cors({
 app.use(express.json());
 
 // ── POST /api/contact/enterprise ─────────────────────────────────────────────
-// SIMPLEST POSSIBLE VERSION - NO EXTERNAL DEPENDENCIES
-app.post('/api/contact/enterprise', (req, res) => {
-  console.log('[CONTACT] ===== REQUEST RECEIVED =====');
-  console.log('[CONTACT] Body:', JSON.stringify(req.body, null, 2));
+app.post('/api/contact/enterprise', async (req, res) => {
+  console.log('[CONTACT] Request received:', req.body);
   
   const { name, email, phone, company, stations, message } = req.body;
   
-  // Validate
+  // Validate required fields
   if (!name || !email || !company) {
-    console.log('[CONTACT] Missing fields');
     return res.status(400).json({ 
       success: false,
-      error: 'Name, email and company are required',
-      received: { name: !!name, email: !!email, company: !!company }
+      error: 'Name, email and company are required'
     });
   }
 
-  // Always return success - this is the simplest fix
-  console.log('[CONTACT] Enquiry received from:', email);
-  console.log('[CONTACT] Company:', company);
+  // Check Gmail configuration
+  const gmailUser = process.env.GMAIL_USER;
+  const gmailPass = process.env.GMAIL_APP_PASSWORD;
   
-  // Try to send email if Gmail is configured
-  if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
-    try {
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: { 
-          user: process.env.GMAIL_USER, 
-          pass: process.env.GMAIL_APP_PASSWORD 
-        },
-      });
+  console.log('[CONTACT] GMAIL_USER configured:', !!gmailUser);
+  console.log('[CONTACT] GMAIL_APP_PASSWORD configured:', !!gmailPass);
 
-      transporter.sendMail({
-        from: `"FuelSense" <${process.env.GMAIL_USER}>`,
-        to: process.env.GMAIL_USER,
-        replyTo: email,
-        subject: `Enterprise Enquiry - ${company}`,
-        text: `
-Name: ${name}
-Email: ${email}
-Phone: ${phone || 'Not provided'}
-Company: ${company}
-Stations: ${stations || 'Not specified'}
-Message: ${message || 'No message'}
-        `,
-        html: `
-          <h2>Enterprise Enquiry</h2>
-          <p><strong>Name:</strong> ${name}</p>
-          <p><strong>Email:</strong> ${email}</p>
-          <p><strong>Phone:</strong> ${phone || 'Not provided'}</p>
-          <p><strong>Company:</strong> ${company}</p>
-          <p><strong>Stations:</strong> ${stations || 'Not specified'}</p>
-          <p><strong>Message:</strong> ${message || 'No message'}</p>
-        `
-      }).then(info => {
-        console.log('[CONTACT] Email sent:', info.messageId);
-      }).catch(err => {
-        console.error('[CONTACT] Email send error:', err.message);
-      });
-    } catch (err) {
-      console.error('[CONTACT] Email setup error:', err.message);
-    }
-  } else {
-    console.log('[CONTACT] Gmail not configured - skipping email');
+  // If Gmail is not configured, still return success but log the enquiry
+  if (!gmailUser || !gmailPass) {
+    console.log('[CONTACT] Gmail not configured - enquiry logged but email not sent');
+    return res.json({ 
+      success: true, 
+      message: 'Enquiry received! Our team will contact you within 24 hours.',
+      note: 'Email notification not sent (Gmail not configured)'
+    });
   }
 
-  // Always return success to the frontend
-  res.json({ 
-    success: true, 
-    message: 'Enquiry sent successfully!',
-    data: { name, email, company }
-  });
+  try {
+    // Create email transporter
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: gmailUser,
+        pass: gmailPass
+      }
+    });
+
+    // Verify connection
+    await transporter.verify();
+    console.log('[CONTACT] Gmail transporter verified');
+
+    // Send email
+    const info = await transporter.sendMail({
+      from: `"FuelSense" <${gmailUser}>`,
+      to: 'bernicewakarindi@gmail.com',
+      replyTo: email,
+      subject: `Enterprise Enquiry — ${company}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+          <h2 style="color: #1a1a2e; border-bottom: 2px solid #4CAF50; padding-bottom: 10px;">⛽ FuelSense — Enterprise Enquiry</h2>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr><td style="padding: 8px 0; font-weight: bold;">Name:</td><td style="padding: 8px 0;">${name}</td></tr>
+            <tr><td style="padding: 8px 0; font-weight: bold;">Email:</td><td style="padding: 8px 0;"><a href="mailto:${email}">${email}</a></td></tr>
+            <tr><td style="padding: 8px 0; font-weight: bold;">Phone:</td><td style="padding: 8px 0;">${phone || 'Not provided'}</td></tr>
+            <tr><td style="padding: 8px 0; font-weight: bold;">Company:</td><td style="padding: 8px 0;">${company}</td></tr>
+            <tr><td style="padding: 8px 0; font-weight: bold;">Stations:</td><td style="padding: 8px 0;">${stations || 'Not specified'}</td></tr>
+            <tr><td style="padding: 8px 0; font-weight: bold; vertical-align: top;">Message:</td><td style="padding: 8px 0;">${message || 'No message provided'}</td></tr>
+          </table>
+          <p style="margin-top: 20px; color: #666; font-size: 12px;">This enquiry was submitted from the FuelSense billing page.</p>
+        </div>
+      `
+    });
+
+    console.log('[CONTACT] Email sent successfully! Message ID:', info.messageId);
+    
+    res.json({ 
+      success: true, 
+      message: 'Enquiry sent successfully! Our team will contact you within 24 hours.',
+      messageId: info.messageId
+    });
+
+  } catch (error) {
+    console.error('[CONTACT] Error sending email:', error.message);
+    console.error('[CONTACT] Full error:', error);
+    
+    // Still return success to the user so they don't get an error
+    res.json({ 
+      success: true, 
+      message: 'Enquiry received! Our team will contact you within 24 hours.',
+      note: 'We encountered a technical issue with email delivery, but your enquiry has been logged.'
+    });
+  }
 });
 
 // ── Initialize Resend ────────────────────────────────────────────────────────
