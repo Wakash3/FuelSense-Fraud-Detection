@@ -6,6 +6,7 @@ import Tanks from './pages/Tanks';
 import Users from './pages/Users';
 import Suppliers from './pages/Suppliers';
 import AlertConfig from './pages/AlertConfig';
+import ReconciliationConfig from './pages/ReconciliationConfig';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -18,7 +19,8 @@ const navItems = [
   { id: 'tanks', icon: '🛢', label: 'Tanks' },
   { id: 'users', icon: '👥', label: 'Users' },
   { id: 'suppliers', icon: '🚚', label: 'Suppliers' },
-  { id: 'alertconfig', icon: '🔔', label: 'Alerts' }
+  { id: 'alertconfig', icon: '🔔', label: 'Alerts' },
+  { id: 'reconconfig', icon: '⚖️', label: 'Reconciliation' }
 ];
 
 const ALLOWED_ROLES = ['admin', 'owner', 'headquarters', 'station_manager'];
@@ -160,6 +162,7 @@ export default function App() {
         {activeTab === 'users' && <Users api={API} />}
         {activeTab === 'suppliers' && <Suppliers api={API} />}
         {activeTab === 'alertconfig' && <AlertConfig api={API} />}
+        {activeTab === 'reconconfig' && <ReconciliationConfig api={API} />}
       </div>
     </div>
   );
