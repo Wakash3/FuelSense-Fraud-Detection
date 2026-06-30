@@ -519,38 +519,19 @@ function App() {
                 </div>
               )}
 
-<<<<<<< Updated upstream
+
               {/* ── SHIFTS ── */}
               {activeTab === 'shifts' && (
-                <ShiftManager tanks={tanks} darkMode={darkMode} />
+                <ShiftManager tanks={tanks} darkMode={darkMode} stationId={activeStation} />
               )}
-
               {/* ── PUMP VS DIP ── */}
               {activeTab === 'pump-vs-dip' && (
-                <PumpVsDip darkMode={darkMode} />
+                <PumpVsDip darkMode={darkMode} stationId={activeStation} />
               )}
-
               {/* ── ALERTS ── */}
               {activeTab === 'alerts' && (
-                <AlertsPanel darkMode={darkMode} />
+                <AlertsPanel darkMode={darkMode} stationId={activeStation} />
               )}
-=======
-          {/* ── SHIFTS ── */}
-          {activeTab === 'shifts' && (
-            <ShiftManager tanks={tanks} darkMode={darkMode} stationId={activeStation} />
-          )}
-
-          {/* ── PUMP VS DIP ── */}
-          {activeTab === 'pump-vs-dip' && (
-            <PumpVsDip darkMode={darkMode} stationId={activeStation} />
-          )}
-
-          {/* ── ALERTS ── */}
-          {activeTab === 'alerts' && (
-            <AlertsPanel darkMode={darkMode} stationId={activeStation} />
-          )}
->>>>>>> Stashed changes
-
               {/* ── AUDIT LOG ── */}
               {activeTab === 'audit' && (
                 <div>
