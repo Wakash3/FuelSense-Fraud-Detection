@@ -567,6 +567,7 @@ app.post('/api/payments/initiate', async (req, res) => {
       if (!planRes.rows.length) return res.status(404).json({ error: 'Plan not found' });
       plan = planRes.rows[0];
       amount = billing_cycle === 'annual' ? plan.price_annual : plan.price_monthly;
+      if (process.env.MAX_PAYMENT_AMOUNT) amount = Math.min(amount, parseFloat(process.env.MAX_PAYMENT_AMOUNT)); // temp cap — remove MAX_PAYMENT_AMOUNT env var when Pesapal raises limit
     }
 
     // Get org_id from station
