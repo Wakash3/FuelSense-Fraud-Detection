@@ -1,10 +1,12 @@
-[200~import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import Login from './pages/Login';
 import Stations from './pages/Stations';
 import Tanks from './pages/Tanks';
 import Users from './pages/Users';
 import Suppliers from './pages/Suppliers';
+import AlertConfig from './pages/AlertConfig';
+import ReconciliationConfig from './pages/ReconciliationConfig';
 import Organizations from './pages/Organizations';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
@@ -15,10 +17,12 @@ export { API };
 const SUPER_ADMINS = ['bernicewakarindi@gmail.com', 'berwak18@gmail.com'];
 
 const BASE_NAV = [
-  { id: 'stations',      icon: '🏪', label: 'Stations' },
-  { id: 'tanks',         icon: '🛢', label: 'Tanks' },
-  { id: 'users',         icon: '👥', label: 'Users' },
-  { id: 'suppliers',     icon: '🚚', label: 'Suppliers' },
+  { id: 'stations',     icon: '🏪', label: 'Stations' },
+  { id: 'tanks',        icon: '🛢', label: 'Tanks' },
+  { id: 'users',        icon: '👥', label: 'Users' },
+  { id: 'suppliers',    icon: '🚚', label: 'Suppliers' },
+  { id: 'alertconfig',  icon: '🔔', label: 'Alerts' },
+  { id: 'reconconfig',  icon: '⚖️', label: 'Reconciliation' },
 ];
 
 const SUPER_ADMIN_NAV = [
@@ -200,11 +204,13 @@ export default function App() {
         </div>
 
         {activeTab === 'organizations' && isSuperAdmin && <Organizations api={API} session={session} />}
-        {activeTab === 'stations'      && <Stations      api={API} session={session} />}
-        {activeTab === 'tanks'         && <Tanks         api={API} session={session} />}
-        {activeTab === 'users'         && <Users         api={API} session={session} />}
-        {activeTab === 'suppliers'     && <Suppliers     api={API} session={session} />}
+        {activeTab === 'stations'      && <Stations              api={API} session={session} />}
+        {activeTab === 'tanks'         && <Tanks                 api={API} session={session} />}
+        {activeTab === 'users'         && <Users                 api={API} session={session} />}
+        {activeTab === 'suppliers'     && <Suppliers              api={API} session={session} />}
+        {activeTab === 'alertconfig'   && <AlertConfig            api={API} session={session} />}
+        {activeTab === 'reconconfig'   && <ReconciliationConfig   api={API} session={session} />}
       </div>
     </div>
   );
-}~EOF
+}
