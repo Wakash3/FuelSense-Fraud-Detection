@@ -276,7 +276,14 @@ async function getShifts(db, tankId, limit = 30) {
 // ---------------------------------------------------------------------------
 // Get all shifts across all tanks (for dashboard)
 // ---------------------------------------------------------------------------
-async function getAllShifts(db, limit = 50) {
+async function getAllShifts(db, limit = 50, stationId = null) {
+  const params = [];
+  let where = '';
+  if (stationId) {
+    params.push(stationId);
+    where = `WHERE t.station_id = $${params.length}`;
+  }
+  params.push(limit);
   const result = await db.query(
     `SELECT
        s.*,
@@ -284,9 +291,10 @@ async function getAllShifts(db, limit = 50) {
        t.fuel_type
      FROM shifts s
      JOIN tanks t ON t.id = s.tank_id
+     ${where}
      ORDER BY s.shift_date DESC, s.started_at DESC
-     LIMIT $1`,
-    [limit]
+     LIMIT $${params.length}`,
+    params
   );
   return result.rows;
 }

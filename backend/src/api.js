@@ -406,7 +406,7 @@ app.post('/api/alerts/test', async (req, res) => {
 app.get('/api/shifts', async (req, res) => {
   try {
     const client = await getDb();
-    res.json(await getAllShifts(client, parseInt(req.query.limit) || 50));
+    res.json(await getAllShifts(client, parseInt(req.query.limit) || 50, req.query.station_id || null));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -440,13 +440,21 @@ app.post('/api/shifts/:id/close', async (req, res) => {
 app.get('/api/pump-vs-dip', async (req, res) => {
   try {
     const client = await getDb();
+    const stationId = req.query.station_id;
+    const params = [];
+    let where = `s.status IN ('closed','flagged') AND s.dip_sales IS NOT NULL`;
+    if (stationId) {
+      params.push(stationId);
+      where += ` AND t.station_id = ${params.length}`;
+    }
     const result = await client.query(
       `SELECT s.id, s.shift_name, s.shift_date, s.opening_nsv, s.closing_nsv,
               s.pump_meter_sales, s.dip_sales, s.variance_litres, s.variance_pct,
               s.status, s.attendant_name, t.tank_number, t.fuel_type
          FROM shifts s JOIN tanks t ON t.id = s.tank_id
-        WHERE s.status IN ('closed','flagged') AND s.dip_sales IS NOT NULL
-        ORDER BY s.shift_date DESC, s.started_at DESC LIMIT 60`
+        WHERE ${where}
+        ORDER BY s.shift_date DESC, s.started_at DESC LIMIT 60`,
+      params
     );
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
